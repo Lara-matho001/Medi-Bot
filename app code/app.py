@@ -33,9 +33,9 @@ def init_db():
 
     c.execute("SELECT COUNT(*) FROM patients")
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('John', '101', 'Paracetamol')")
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Tom', '102', 'Aspirin')")
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Rose', '103', 'Ibuprofen')")
+        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Patient A', '101', 'Paracetamol')")
+        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Patient B', '102', 'Aspirin')")
+        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Patient C', '103', 'Ibuprofen')")
 
     conn.commit()
     conn.close()
