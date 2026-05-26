@@ -74,47 +74,85 @@ STYLE = """
         font-family: Arial;
         background: #0b1f3a;
         color: white;
-        padding: 30px;
+        padding: 50px;
+        font-size: 22px;
     }
+
+    h1 {
+        font-size: 48px;
+        margin-bottom: 30px;
+    }
+
+    h2 {
+        font-size: 34px;
+    }
+
+    h3 {
+        font-size: 28px;
+    }
+
     .box {
         background: #d9d9d9;
         color: #111;
-        padding: 20px;
-        border-radius: 12px;
-        max-width: 550px;
-        margin-bottom: 20px;
+        padding: 35px;
+        border-radius: 18px;
+        max-width: 900px;
+        margin-bottom: 30px;
     }
+
     input, select, button {
         width: 100%;
-        padding: 10px;
-        margin-top: 10px;
+        padding: 18px;
+        margin-top: 15px;
         box-sizing: border-box;
+        font-size: 22px;
+        border-radius: 10px;
     }
+
     button {
         background: #0b1f3a;
         color: white;
         border: none;
-        border-radius: 8px;
         cursor: pointer;
+        font-size: 24px;
+        font-weight: bold;
     }
+
     a {
         color: #ffffff;
-        margin-right: 15px;
+        margin-right: 25px;
+        font-size: 24px;
+        text-decoration: none;
     }
+
     .darklink {
         color: #0b1f3a;
+        font-size: 22px;
+        font-weight: bold;
     }
+
     table {
         background: #d9d9d9;
         color: #111;
         border-collapse: collapse;
         width: 100%;
-        max-width: 750px;
+        max-width: 1200px;
+        font-size: 22px;
     }
+
     th, td {
-        padding: 10px;
+        padding: 18px;
         border: 1px solid #999;
         text-align: left;
+    }
+
+    th {
+        font-size: 24px;
+    }
+
+    label {
+        font-size: 22px;
+        font-weight: bold;
     }
 </style>
 """
