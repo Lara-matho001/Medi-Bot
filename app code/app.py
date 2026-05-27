@@ -33,15 +33,19 @@ def init_db():
 
     c.execute("SELECT COUNT(*) FROM patients")
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Patient A', '101', 'Paracetamol')")
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Patient B', '102', 'Aspirin')")
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Patient C', '103', 'Ibuprofen')")
+        c.execute("INSERT INTO patients (name, room, medication) VALUES ('John', '101', 'Paracetamol')")
+        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Grace', '102', 'Aspirin')")
+        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Tom', '103', 'Ibuprofen')")
 
     conn.commit()
     conn.close()
 
+import serial
+arduino = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
+time.sleep(2)
+
 def send_command_to_robot(room):
-    print(f"COMMAND SENT TO ARDUINO: GO_TO_ROOM_{room}")
+    arduino.write(b"LED_ON\n")
 
 def scheduler_loop():
     while True:
@@ -74,47 +78,85 @@ STYLE = """
         font-family: Arial;
         background: #0b1f3a;
         color: white;
-        padding: 30px;
+        padding: 50px;
+        font-size: 22px;
     }
+
+    h1 {
+        font-size: 48px;
+        margin-bottom: 30px;
+    }
+
+    h2 {
+        font-size: 34px;
+    }
+
+    h3 {
+        font-size: 28px;
+    }
+
     .box {
         background: #d9d9d9;
         color: #111;
-        padding: 20px;
-        border-radius: 12px;
-        max-width: 550px;
-        margin-bottom: 20px;
+        padding: 35px;
+        border-radius: 18px;
+        max-width: 900px;
+        margin-bottom: 30px;
     }
+
     input, select, button {
         width: 100%;
-        padding: 10px;
-        margin-top: 10px;
+        padding: 18px;
+        margin-top: 15px;
         box-sizing: border-box;
+        font-size: 22px;
+        border-radius: 10px;
     }
+
     button {
         background: #0b1f3a;
         color: white;
         border: none;
-        border-radius: 8px;
         cursor: pointer;
+        font-size: 24px;
+        font-weight: bold;
     }
+
     a {
         color: #ffffff;
-        margin-right: 15px;
+        margin-right: 25px;
+        font-size: 24px;
+        text-decoration: none;
     }
+
     .darklink {
         color: #0b1f3a;
+        font-size: 22px;
+        font-weight: bold;
     }
+
     table {
         background: #d9d9d9;
         color: #111;
         border-collapse: collapse;
         width: 100%;
-        max-width: 750px;
+        max-width: 1200px;
+        font-size: 22px;
     }
+
     th, td {
-        padding: 10px;
+        padding: 18px;
         border: 1px solid #999;
         text-align: left;
+    }
+
+    th {
+        font-size: 24px;
+    }
+
+    label {
+        font-size: 22px;
+        font-weight: bold;
     }
 </style>
 """
