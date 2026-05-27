@@ -33,15 +33,19 @@ def init_db():
 
     c.execute("SELECT COUNT(*) FROM patients")
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Patient A', '101', 'Paracetamol')")
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Patient B', '102', 'Aspirin')")
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Patient C', '103', 'Ibuprofen')")
+        c.execute("INSERT INTO patients (name, room, medication) VALUES ('John', '101', 'Paracetamol')")
+        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Grace', '102', 'Aspirin')")
+        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Tom', '103', 'Ibuprofen')")
 
     conn.commit()
     conn.close()
 
+import serial
+arduino = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
+time.sleep(2)
+
 def send_command_to_robot(room):
-    print(f"COMMAND SENT TO ARDUINO: GO_TO_ROOM_{room}")
+    arduino.write(b"LED_ON\n")
 
 def scheduler_loop():
     while True:
