@@ -74,89 +74,144 @@ def scheduler_loop():
 
 STYLE = """
 <style>
+    * {
+        box-sizing: border-box;
+    }
+
     body {
-        font-family: Arial;
-        background: #0b1f3a;
+        font-family: Arial, sans-serif;
+        background: linear-gradient(135deg, #081a33, #123c69);
         color: white;
-        padding: 50px;
-        font-size: 22px;
+        padding: 60px 90px;
+        font-size: 24px;
+        margin: 0;
     }
 
     h1 {
-        font-size: 48px;
-        margin-bottom: 30px;
+        font-size: 56px;
+        margin-bottom: 20px;
     }
 
     h2 {
-        font-size: 34px;
+        font-size: 36px;
+        margin-top: 0;
     }
 
-    h3 {
-        font-size: 28px;
+    .subtitle {
+        font-size: 24px;
+        color: #d7e8ff;
+        margin-bottom: 40px;
     }
 
     .box {
-        background: #d9d9d9;
+        background: #f2f6fb;
         color: #111;
+        padding: 40px;
+        border-radius: 24px;
+        max-width: 950px;
+        margin-bottom: 35px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.25);
+    }
+
+    .home-grid {
+        display: flex;
+        gap: 30px;
+        margin-top: 30px;
+        flex-wrap: wrap;
+    }
+
+    .home-card {
+        background: white;
+        color: #111;
+        width: 420px;
+        min-height: 220px;
         padding: 35px;
-        border-radius: 18px;
-        max-width: 900px;
-        margin-bottom: 30px;
+        border-radius: 24px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.25);
+    }
+
+    .home-card h2 {
+        font-size: 34px;
+        margin-bottom: 15px;
+        color: #0b1f3a;
+    }
+
+    .home-card p {
+        font-size: 22px;
+        color: #444;
+        line-height: 1.4;
+    }
+
+    .main-button {
+        display: block;
+        background: #0b1f3a;
+        color: white;
+        text-align: center;
+        padding: 18px;
+        border-radius: 14px;
+        margin-top: 25px;
+        font-size: 24px;
+        font-weight: bold;
+        text-decoration: none;
     }
 
     input, select, button {
         width: 100%;
-        padding: 18px;
+        padding: 22px;
         margin-top: 15px;
-        box-sizing: border-box;
-        font-size: 22px;
-        border-radius: 10px;
+        margin-bottom: 20px;
+        font-size: 24px;
+        border-radius: 14px;
+        border: 2px solid #b8c4d1;
     }
 
     button {
         background: #0b1f3a;
         color: white;
         border: none;
+        font-weight: bold;
         cursor: pointer;
+    }
+
+    label {
         font-size: 24px;
         font-weight: bold;
     }
 
     a {
-        color: #ffffff;
+        color: white;
         margin-right: 25px;
         font-size: 24px;
+        font-weight: bold;
         text-decoration: none;
     }
 
     .darklink {
         color: #0b1f3a;
-        font-size: 22px;
-        font-weight: bold;
     }
 
     table {
-        background: #d9d9d9;
+        background: white;
         color: #111;
         border-collapse: collapse;
         width: 100%;
         max-width: 1200px;
         font-size: 22px;
-    }
-
-    th, td {
-        padding: 18px;
-        border: 1px solid #999;
-        text-align: left;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.25);
     }
 
     th {
+        background: #0b1f3a;
+        color: white;
         font-size: 24px;
     }
 
-    label {
-        font-size: 22px;
-        font-weight: bold;
+    th, td {
+        padding: 22px;
+        border: 1px solid #ccc;
+        text-align: left;
     }
 </style>
 """
@@ -171,11 +226,22 @@ def home():
     </head>
     <body>
         <h1>Medication Robot System</h1>
+        <p class="subtitle">Hospital medication delivery dashboard for scheduling and patient management</p>
 
-        <div class="box">
-            <h2>Home</h2>
-            <a class="darklink" href="/schedule_page">Schedule Delivery</a><br><br>
-            <a class="darklink" href="/patients">Manage Patients</a>
+        <div class="home-grid">
+
+            <div class="home-card">
+                <h2>Schedule Delivery</h2>
+                <p>Select a patient, set the medication delivery time, and send the task to the robot automatically.</p>
+                <a class="main-button" href="/schedule_page">Open Scheduler</a>
+            </div>
+
+            <div class="home-card">
+                <h2>Manage Patients</h2>
+                <p>Add, edit, or remove patient details including room number and medication type.</p>
+                <a class="main-button" href="/patients">Open Patients</a>
+            </div>
+
         </div>
     </body>
     </html>
