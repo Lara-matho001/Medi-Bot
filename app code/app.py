@@ -35,10 +35,10 @@ def init_db():
     """)
 
     for column in ["patient_name", "room", "medication"]:
-    try:
-        c.execute(f"ALTER TABLE schedules ADD COLUMN {column} TEXT")
-    except sqlite3.OperationalError:
-        pass
+        try:
+            c.execute(f"ALTER TABLE schedules ADD COLUMN {column} TEXT")
+        except sqlite3.OperationalError:
+            pass
 
     c.execute("SELECT COUNT(*) FROM patients")
     if c.fetchone()[0] == 0:
