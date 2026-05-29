@@ -26,10 +26,19 @@ def init_db():
         CREATE TABLE IF NOT EXISTS schedules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             patient_id INTEGER,
+            patient_name TEXT,
+            room TEXT,
+            medication TEXT,
             delivery_time TEXT,
             status TEXT
         )
     """)
+
+    for column in ["patient_name", "room", "medication"]:
+        try:
+            c.execute(f"ALTER TABLE schedules ADD COLUMN {column} TEXT")
+        except sqlite3.OperationalError:
+            pass
 
     c.execute("SELECT COUNT(*) FROM patients")
     if c.fetchone()[0] == 0:
@@ -242,6 +251,12 @@ def home():
                 <a class="main-button" href="/patients">Open Patients</a>
             </div>
 
+            <div class="home-card">
+                <h2>Delivery History</h2>
+                <p>View all scheduled deliveries including patient, room, medication, time, and status.</p>
+                <a class="main-button" href="/delivery_history">View History</a>
+            </div>
+
         </div>
     </body>
     </html>
@@ -297,10 +312,21 @@ def schedule():
 
     conn = get_db()
     c = conn.cursor()
+
+    c.execute("SELECT name, room, medication FROM patients WHERE id = ?", (patient_id,))
+    patient = c.fetchone()
+
+    patient_name = patient[0]
+    room = patient[1]
+    medication = patient[2]
+
     c.execute(
-        "INSERT INTO schedules (patient_id, delivery_time, status) VALUES (?, ?, ?)",
-        (patient_id, delivery_time, "Pending")
+        """INSERT INTO schedules 
+        (patient_id, patient_name, room, medication, delivery_time, status) 
+        VALUES (?, ?, ?, ?, ?, ?)""",
+        (patient_id, patient_name, room, medication, delivery_time, "Pending")
     )
+
     conn.commit()
     conn.close()
 
@@ -308,8 +334,12 @@ def schedule():
     <html>
     <head>{STYLE}</head>
     <body>
-        <h2>Delivery scheduled for {delivery_time}</h2>
+        <h2>Delivery scheduled for {patient_name}</h2>
+        <p>Room: {room}</p>
+        <p>Medication: {medication}</p>
+        <p>Time: {delivery_time}</p>
         <a href="/schedule_page">Back to Schedule</a>
+        <a href="/delivery_history">Delivery History</a>
         <a href="/">Home</a>
     </body>
     </html>
@@ -452,6 +482,60 @@ def delete_patient(patient_id):
     conn.close()
 
     return redirect("/patients")
+
+@app.route("/delivery_history")
+def delivery_history():
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT patient_name, room, medication, delivery_time, status
+        FROM schedules
+        ORDER BY id DESC
+    """)
+
+    deliveries = c.fetchall()
+    conn.close()
+
+    html = """
+    <html>
+    <head>
+        <title>Delivery History</title>
+        """ + STYLE + """
+    </head>
+    <body>
+        <h1>Delivery History</h1>
+
+        <a href="/">Home</a>
+        <a href="/schedule_page">Schedule Delivery</a>
+        <a href="/patients">Manage Patients</a>
+
+        <h2>All Scheduled Deliveries</h2>
+
+        <table>
+            <tr>
+                <th>Patient</th>
+                <th>Room</th>
+                <th>Pills Dispensed</th>
+                <th>Delivery Time</th>
+                <th>Status</th>
+            </tr>
+
+            {% for d in deliveries %}
+            <tr>
+                <td>{{d[0]}}</td>
+                <td>{{d[1]}}</td>
+                <td>{{d[2]}}</td>
+                <td>{{d[3]}}</td>
+                <td>{{d[4]}}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, deliveries=deliveries)
 
 if __name__ == "__main__":
     init_db()
