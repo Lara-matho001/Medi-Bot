@@ -34,7 +34,7 @@ def init_db():
         )
     """)
 
-for column in ["patient_name", "room", "medication"]:
+    for column in ["patient_name", "room", "medication"]:
     try:
         c.execute(f"ALTER TABLE schedules ADD COLUMN {column} TEXT")
     except sqlite3.OperationalError:
