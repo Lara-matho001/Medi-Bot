@@ -1,38 +1,103 @@
-#ifndef CONFIG_H
-#define CONFIG_H
+#include "config.h"
+#include "stepper_control.h"
+#include "servo_control.h"
+// RFID disabled for motor/dispense testing.
+// #include "rfid_control.h"
+#include "dispense.h"
 
-// ================================
-// CONSTANTS
-// ================================
+// Stores the current stepper position after the dispenser has been homed.
+int dispenserCurrentStepPosition = 0;
 
-#define STEPS_PER_REV       200
-#define STEPS_PER_SLOT      40
+void setup() {
 
-#define IR_HOME_PIN         2
-#define IR_CHUTE_PIN        3
+    // Start the serial connection first so setup debug messages are visible.
+    Serial.begin(DISPENSER_SERIAL_BAUD);
+    Serial.println("DEBUG:BOOT");
 
-#define SERVO_A_PIN         9
-#define SERVO_B_PIN         10
+    // Prepare the stepper output pins before trying to move the carousel.
+    Serial.println("DEBUG:INIT_STEPPER");
+    initialise_stepper();
 
-#define RFID_SS_PIN         53
-#define RFID_RST_PIN        5
+    // Attach both servos and move them to their starting positions.
+    Serial.println("DEBUG:INIT_SERVOS");
+    initialise_servos();
 
-#define SERVO_B_ENGAGE_POS  150
-#define SERVO_B_RETRACT_POS 0
+    // INPUT_PULLUP means the Arduino holds the pin HIGH until the sensor pulls it LOW.
+    Serial.println("DEBUG:INIT_IR_SENSORS");
+    pinMode(DISPENSER_IR_HOME_PIN, INPUT_PULLUP);
+    pinMode(DISPENSER_IR_CHUTE_PIN, INPUT_PULLUP);
 
-#define SERVO_A_SPIN_DEG    360
+    // RFID disabled for motor/dispense testing.
+    // Start SPI communication and initialise the MFRC522 RFID reader.
+    // initialise_rfid();
 
-#define DISPENSE_WINDOW_MS  5000
+    // Let the controller/computer know the dispenser sketch has booted.
+    Serial.println("ARDUINO_READY");
+    Serial.println("DEBUG:READY_FOR_COMMANDS");
+    Serial.println("Type DISPENSE:<slot>");
+}
 
-#define SERIAL_BAUD         9600
+void loop() {
 
-// Stepper pins
-const int STEPPER_PINS[4] = {4, 5, 6, 7};
+    // Commands arrive as one line of text, for example:
+    // SCAN_RFID
+    // DISPENSE:2
+    if (Serial.available()) {
 
-// ================================
-// GLOBALS
-// ================================
+        String raw = Serial.readStringUntil('\n');
 
-extern int current_step_position;
+        // Remove spaces, carriage returns, and newline leftovers.
+        raw.trim();
 
-#endif
+        Serial.print("DEBUG:RAW_CMD=");
+        Serial.println(raw);
+
+        // Commands may have a parameter after a colon.
+        int separator = raw.indexOf(':');
+
+        String verb;
+        String param;
+
+        if (separator != -1) {
+
+            // Example: "DISPENSE:2" becomes verb="DISPENSE", param="2".
+            verb = raw.substring(0, separator);
+            param = raw.substring(separator + 1);
+        }
+        else {
+
+            // Example: "SCAN_RFID" has no parameter.
+            verb = raw;
+        }
+
+        Serial.print("DEBUG:VERB=");
+        Serial.println(verb);
+        Serial.print("DEBUG:PARAM=");
+        Serial.println(param);
+
+        // RFID disabled for motor/dispense testing.
+        // if (verb == "SCAN_RFID") {
+        //
+        //     // Look for a card and print either RFID:<UID> or RFID:TIMEOUT.
+        //     handle_rfid_scan();
+        // }
+        // else
+        if (verb == "DISPENSE") {
+
+            // Convert the slot number text into an integer and run the full dispense process.
+            int compartment_id = param.toInt();
+
+            Serial.print("DEBUG:DISPENSE_REQUEST_SLOT=");
+            Serial.println(compartment_id);
+
+            handle_dispense(compartment_id);
+        }
+        else {
+
+            // Anything else is not part of this sketch's command set.
+            Serial.print("DEBUG:UNKNOWN_CMD=");
+            Serial.println(raw);
+            Serial.println("ERROR:UNKNOWN_CMD");
+        }
+    }
+}

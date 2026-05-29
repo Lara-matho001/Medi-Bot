@@ -1,57 +1,74 @@
 #include "stepper_control.h"
 #include "config.h"
 
-int stepSequence[4][4] = {
-    {1,0,0,1},
-    {1,0,0,0},
-    {1,1,0,0},
-    {0,1,0,0}
-};
-
 void initialise_stepper() {
-    for (int i = 0; i < 4; i++) {
-        pinMode(STEPPER_PINS[i], OUTPUT);
-    }
-}
+    // STEP/DIR/ENABLE drivers only need three Arduino outputs.
+    pinMode(DISPENSER_STEPPER_STEP_PIN, OUTPUT);
+    pinMode(DISPENSER_STEPPER_DIR_PIN, OUTPUT);
+    pinMode(DISPENSER_STEPPER_ENABLE_PIN, OUTPUT);
 
-void singleStep(int stepIndex) {
-    for (int pin = 0; pin < 4; pin++) {
-        digitalWrite(STEPPER_PINS[pin], stepSequence[stepIndex][pin]);
-    }
+    // Start with the driver enabled so the motor can move and hold position.
+    digitalWrite(DISPENSER_STEPPER_ENABLE_PIN, DISPENSER_STEPPER_ENABLE_ACTIVE_STATE);
+    digitalWrite(DISPENSER_STEPPER_STEP_PIN, LOW);
+    digitalWrite(DISPENSER_STEPPER_DIR_PIN, DISPENSER_STEPPER_CLOCKWISE_STATE);
+
+    Serial.println("DEBUG:STEPPER_READY");
 }
 
 void stepper_step(bool clockwise, int steps) {
 
+    if (steps <= 0) {
+        Serial.println("DEBUG:STEPPER_NO_STEPS_REQUESTED");
+        return;
+    }
+
+    // Set the direction once before sending step pulses.
+    digitalWrite(
+        DISPENSER_STEPPER_DIR_PIN,
+        clockwise ? DISPENSER_STEPPER_CLOCKWISE_STATE : DISPENSER_STEPPER_COUNTERCLOCKWISE_STATE
+    );
+
+    // Make sure the driver is enabled before moving.
+    digitalWrite(DISPENSER_STEPPER_ENABLE_PIN, DISPENSER_STEPPER_ENABLE_ACTIVE_STATE);
+
     for (int i = 0; i < steps; i++) {
 
-        for (int step = 0; step < 4; step++) {
-
-            int idx = clockwise ? step : (3 - step);
-
-            singleStep(idx);
-
-            delayMicroseconds(2000);
-        }
+        // A STEP/DIR driver moves one step on the rising edge of the STEP pulse.
+        digitalWrite(DISPENSER_STEPPER_STEP_PIN, HIGH);
+        delayMicroseconds(DISPENSER_STEPPER_STEP_DELAY_US);
+        digitalWrite(DISPENSER_STEPPER_STEP_PIN, LOW);
+        delayMicroseconds(DISPENSER_STEPPER_STEP_DELAY_US);
     }
 }
 
 bool home_stepper() {
 
     int step_count = 0;
+    Serial.print("DEBUG:HOME_SENSOR_START=");
+    Serial.println(digitalRead(DISPENSER_IR_HOME_PIN));
 
-    while (digitalRead(IR_HOME_PIN) == HIGH) {
+    // With INPUT_PULLUP, HIGH means the home sensor is not triggered yet.
+    while (digitalRead(DISPENSER_IR_HOME_PIN) == HIGH) {
 
+        // Move slowly until the home sensor is reached.
         stepper_step(true, 1);
 
         step_count++;
 
-        if (step_count > STEPS_PER_REV * 2) {
+        // If it rotates more than two full turns without finding home, something is wrong.
+        if (step_count > DISPENSER_STEPS_PER_REV * 2) {
+            Serial.print("DEBUG:HOME_FAIL_STEPS=");
+            Serial.println(step_count);
             Serial.println("ERROR:HOME_FAIL");
             return false;
         }
     }
 
-    current_step_position = 0;
+    // Home sensor was found, so this physical position becomes step zero.
+    dispenserCurrentStepPosition = 0;
+
+    Serial.print("DEBUG:HOME_FOUND_STEPS=");
+    Serial.println(step_count);
 
     return true;
 }
