@@ -59,10 +59,6 @@ import serial
 arduino = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
 time.sleep(2)
 
-import serial
-arduino = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
-time.sleep(2)
-
 def normalise_rfid(rfid):
     return rfid.replace("RFID:", "").replace("UID:", "").strip().upper()
 
