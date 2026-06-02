@@ -1,8 +1,6 @@
 #include "config.h"
 #include "stepper_control.h"
 #include "servo_control.h"
-// RFID disabled for motor/dispense testing.
-// #include "rfid_control.h"
 #include "dispense.h"
 
 // Stores the current stepper position after the dispenser has been homed.
@@ -11,7 +9,7 @@ int dispenserCurrentStepPosition = 0;
 void setup() {
 
     // Start the serial connection first so setup debug messages are visible.
-    Serial.begin(DISPENSER_SERIAL_BAUD);
+    Serial.begin(SERIAL_BAUD);
     Serial.println("DEBUG:BOOT");
 
     // Prepare the stepper output pins before trying to move the carousel.
@@ -24,12 +22,8 @@ void setup() {
 
     // INPUT_PULLUP means the Arduino holds the pin HIGH until the sensor pulls it LOW.
     Serial.println("DEBUG:INIT_IR_SENSORS");
-    pinMode(DISPENSER_IR_HOME_PIN, INPUT_PULLUP);
-    pinMode(DISPENSER_IR_CHUTE_PIN, INPUT_PULLUP);
-
-    // RFID disabled for motor/dispense testing.
-    // Start SPI communication and initialise the MFRC522 RFID reader.
-    // initialise_rfid();
+    pinMode(IR_HOMEING_PIN, INPUT_PULLUP);
+    pinMode(IR_PILL_DETECTION_PIN, INPUT_PULLUP);
 
     // Let the controller/computer know the dispenser sketch has booted.
     Serial.println("ARDUINO_READY");
@@ -39,9 +33,7 @@ void setup() {
 
 void loop() {
 
-    // Commands arrive as one line of text, for example:
-    // SCAN_RFID
-    // DISPENSE:2
+    // Commands arrive as one line of text, for example: DISPENSE:2
     if (Serial.available()) {
 
         String raw = Serial.readStringUntil('\n');
@@ -66,7 +58,6 @@ void loop() {
         }
         else {
 
-            // Example: "SCAN_RFID" has no parameter.
             verb = raw;
         }
 
@@ -75,13 +66,6 @@ void loop() {
         Serial.print("DEBUG:PARAM=");
         Serial.println(param);
 
-        // RFID disabled for motor/dispense testing.
-        // if (verb == "SCAN_RFID") {
-        //
-        //     // Look for a card and print either RFID:<UID> or RFID:TIMEOUT.
-        //     handle_rfid_scan();
-        // }
-        // else
         if (verb == "DISPENSE") {
 
             // Convert the slot number text into an integer and run the full dispense process.

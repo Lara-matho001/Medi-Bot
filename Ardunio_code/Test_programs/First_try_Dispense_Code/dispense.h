@@ -3,10 +3,6 @@
 
 #include <Arduino.h>
 
-// RFID disabled for motor/dispense testing.
-// Waits for an RFID card and prints the UID over Serial.
-// void handle_rfid_scan();
-
 // Runs the complete dispense process for one compartment.
 void handle_dispense(int compartment_id);
 
