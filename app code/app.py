@@ -18,24 +18,39 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
             room TEXT,
-            medication TEXT
+            medication TEXT,
+            rfid TEXT
         )
     """)
+
+    try:
+        c.execute("ALTER TABLE patients ADD COLUMN rfid TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS schedules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             patient_id INTEGER,
+            patient_name TEXT,
+            room TEXT,
+            medication TEXT,
             delivery_time TEXT,
             status TEXT
         )
     """)
 
+    for column in ["patient_name", "room", "medication", "rfid"]:
+        try:
+            c.execute(f"ALTER TABLE schedules ADD COLUMN {column} TEXT")
+        except sqlite3.OperationalError:
+            pass
+
     c.execute("SELECT COUNT(*) FROM patients")
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('John', '101', 'Paracetamol')")
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Grace', '102', 'Aspirin')")
-        c.execute("INSERT INTO patients (name, room, medication) VALUES ('Tom', '103', 'Ibuprofen')")
+        c.execute("INSERT INTO patients (name, room, medication, rfid) VALUES ('John', '101', 'Paracetamol', 'PATIENT001')")
+        c.execute("INSERT INTO patients (name, room, medication, rfid) VALUES ('Grace', '102', 'Aspirin', 'PATIENT002')")
+        c.execute("INSERT INTO patients (name, room, medication, rfid) VALUES ('Tom', '103', 'Ibuprofen', 'PATIENT003')")
 
     conn.commit()
     conn.close()
@@ -242,6 +257,12 @@ def home():
                 <a class="main-button" href="/patients">Open Patients</a>
             </div>
 
+            <div class="home-card">
+                <h2>Delivery History</h2>
+                <p>View all scheduled deliveries including patient, room, medication, time, and status.</p>
+                <a class="main-button" href="/delivery_history">View History</a>
+            </div>
+
         </div>
     </body>
     </html>
@@ -252,7 +273,7 @@ def home():
 def schedule_page():
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, name, room, medication FROM patients")
+    c.execute("SELECT id, name, room, medication, rfid FROM patients")
     patients = c.fetchall()
     conn.close()
 
@@ -297,10 +318,21 @@ def schedule():
 
     conn = get_db()
     c = conn.cursor()
+
+    c.execute("SELECT name, room, medication FROM patients WHERE id = ?", (patient_id,))
+    patient = c.fetchone()
+
+    patient_name = patient[0]
+    room = patient[1]
+    medication = patient[2]
+
     c.execute(
-        "INSERT INTO schedules (patient_id, delivery_time, status) VALUES (?, ?, ?)",
-        (patient_id, delivery_time, "Pending")
+        """INSERT INTO schedules 
+        (patient_id, patient_name, room, medication, delivery_time, status) 
+        VALUES (?, ?, ?, ?, ?, ?)""",
+        (patient_id, patient_name, room, medication, delivery_time, "Pending")
     )
+
     conn.commit()
     conn.close()
 
@@ -308,8 +340,12 @@ def schedule():
     <html>
     <head>{STYLE}</head>
     <body>
-        <h2>Delivery scheduled for {delivery_time}</h2>
+        <h2>Delivery scheduled for {patient_name}</h2>
+        <p>Room: {room}</p>
+        <p>Medication: {medication}</p>
+        <p>Time: {delivery_time}</p>
         <a href="/schedule_page">Back to Schedule</a>
+        <a href="/delivery_history">Delivery History</a>
         <a href="/">Home</a>
     </body>
     </html>
@@ -319,7 +355,7 @@ def schedule():
 def patients():
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, name, room, medication FROM patients")
+    c.execute("SELECT id, name, room, medication, rfid FROM patients")
     patients = c.fetchall()
     conn.close()
 
@@ -340,6 +376,7 @@ def patients():
                 <input name="name" placeholder="Patient name" required>
                 <input name="room" placeholder="Room number" required>
                 <input name="medication" placeholder="Medication type" required>
+                <input name="rfid" placeholder="RFID Tag ID" required>
                 <button type="submit">Add Patient</button>
             </form>
         </div>
@@ -350,6 +387,7 @@ def patients():
                 <th>Name</th>
                 <th>Room</th>
                 <th>Medication</th>
+                <th>RFID Tag</th>
                 <th>Actions</th>
             </tr>
             {% for p in patients %}
@@ -357,6 +395,7 @@ def patients():
                 <td>{{p[1]}}</td>
                 <td>{{p[2]}}</td>
                 <td>{{p[3]}}</td>
+                <td>{{p[4]}}</td>
                 <td>
                     <a class="darklink" href="/edit_patient/{{p[0]}}">Edit</a>
                     <a class="darklink" href="/delete_patient/{{p[0]}}">Delete</a>
@@ -375,12 +414,13 @@ def add_patient():
     name = request.form["name"]
     room = request.form["room"]
     medication = request.form["medication"]
+    rfid = request.form["rfid"]
 
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO patients (name, room, medication) VALUES (?, ?, ?)",
-        (name, room, medication)
+        "INSERT INTO patients (name, room, medication, rfid) VALUES (?, ?, ?, ?)",
+        (name, room, medication, rfid)
     )
     conn.commit()
     conn.close()
@@ -391,7 +431,7 @@ def add_patient():
 def edit_patient(patient_id):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, name, room, medication FROM patients WHERE id = ?", (patient_id,))
+    c.execute("SELECT id, name, room, medication, rfid FROM patients WHERE id = ?", (patient_id,))
     patient = c.fetchone()
     conn.close()
 
@@ -415,6 +455,9 @@ def edit_patient(patient_id):
                 <label>Medication:</label>
                 <input name="medication" value="{{patient[3]}}" required>
 
+                <label>RFID Tag:</label>
+                <input name="rfid" value="{{patient[4]}}" required>
+
                 <button type="submit">Update Patient</button>
             </form>
         </div>
@@ -431,12 +474,13 @@ def update_patient(patient_id):
     name = request.form["name"]
     room = request.form["room"]
     medication = request.form["medication"]
+    rfid = request.form["rfid"]
 
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "UPDATE patients SET name = ?, room = ?, medication = ? WHERE id = ?",
-        (name, room, medication, patient_id)
+        "UPDATE patients SET name = ?, room = ?, medication = ?, rfid = ? WHERE id = ?",
+        (name, room, medication, rfid, patient_id)
     )
     conn.commit()
     conn.close()
@@ -452,6 +496,60 @@ def delete_patient(patient_id):
     conn.close()
 
     return redirect("/patients")
+
+@app.route("/delivery_history")
+def delivery_history():
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT patient_name, room, medication, delivery_time, status
+        FROM schedules
+        ORDER BY id DESC
+    """)
+
+    deliveries = c.fetchall()
+    conn.close()
+
+    html = """
+    <html>
+    <head>
+        <title>Delivery History</title>
+        """ + STYLE + """
+    </head>
+    <body>
+        <h1>Delivery History</h1>
+
+        <a href="/">Home</a>
+        <a href="/schedule_page">Schedule Delivery</a>
+        <a href="/patients">Manage Patients</a>
+
+        <h2>All Scheduled Deliveries</h2>
+
+        <table>
+            <tr>
+                <th>Patient</th>
+                <th>Room</th>
+                <th>Pills Dispensed</th>
+                <th>Delivery Time</th>
+                <th>Status</th>
+            </tr>
+
+            {% for d in deliveries %}
+            <tr>
+                <td>{{d[0]}}</td>
+                <td>{{d[1]}}</td>
+                <td>{{d[2]}}</td>
+                <td>{{d[3]}}</td>
+                <td>{{d[4]}}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, deliveries=deliveries)
 
 if __name__ == "__main__":
     init_db()
