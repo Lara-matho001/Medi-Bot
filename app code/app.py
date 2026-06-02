@@ -59,8 +59,50 @@ import serial
 arduino = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
 time.sleep(2)
 
-def send_command_to_robot(room):
-    arduino.write(b"LED_ON\n")
+import serial
+arduino = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
+time.sleep(2)
+
+def normalise_rfid(rfid):
+    return rfid.replace("RFID:", "").replace("UID:", "").strip().upper()
+
+def wait_for_rfid_scan():
+    print("Waiting for RFID scan...")
+
+    while True:
+        line = arduino.readline().decode(errors="ignore").strip()
+
+        if line.startswith("RFID:") or line.startswith("UID:"):
+            scanned_rfid = normalise_rfid(line)
+            print("Scanned RFID:", scanned_rfid)
+            return scanned_rfid
+
+def verify_rfid_for_room(room):
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("SELECT rfid FROM patients WHERE room = ?", (room,))
+    result = c.fetchone()
+
+    conn.close()
+
+    if result is None:
+        print("No RFID found for room", room)
+        return False
+
+    expected_rfid = normalise_rfid(result[0])
+    scanned_rfid = wait_for_rfid_scan()
+
+    print("Expected RFID:", expected_rfid)
+
+    if scanned_rfid == expected_rfid:
+        arduino.write(b"CORRECT\n")
+        print("Correct RFID")
+        return True
+    else:
+        arduino.write(b"WRONG\n")
+        print("Wrong RFID")
+        return False
 
 def scheduler_loop():
     while True:
@@ -79,8 +121,17 @@ def scheduler_loop():
         jobs = c.fetchall()
 
         for job_id, room in jobs:
-            send_command_to_robot(room)
-            c.execute("UPDATE schedules SET status = 'Sent' WHERE id = ?", (job_id,))
+            c.execute("UPDATE schedules SET status = 'Waiting for RFID' WHERE id = ?", (job_id,))
+            conn.commit()
+
+            correct = verify_rfid_for_room(room)
+
+            if correct:
+                c.execute("UPDATE schedules SET status = 'RFID Correct' WHERE id = ?", (job_id,))
+                # Later add dispense command here:
+                # arduino.write(b"DISPENSE\n")
+            else:
+                c.execute("UPDATE schedules SET status = 'Wrong RFID' WHERE id = ?", (job_id,))
 
         conn.commit()
         conn.close()
