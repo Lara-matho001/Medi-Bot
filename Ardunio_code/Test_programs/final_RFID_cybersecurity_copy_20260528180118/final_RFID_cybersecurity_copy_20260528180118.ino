@@ -9,7 +9,6 @@ MFRC522 rfid(SS_PIN, RST_PIN);
 void setup() {
   Serial.begin(9600);
 
-  // Important for Arduino Mega SPI
   pinMode(53, OUTPUT);
   digitalWrite(53, HIGH);
 
