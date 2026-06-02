@@ -1,24 +1,31 @@
 #include "servo_control.h"
 #include "config.h"
 
-Servo servoA;
-Servo servoB;
+// Global servo objects used by the dispense code.
+Servo dispenserServoA;
+Servo dispenserServoB;
 
 void initialise_servos() {
 
-    servoA.attach(SERVO_A_PIN);
-    servoB.attach(SERVO_B_PIN);
+    // Connect each Servo object to its physical Arduino pin.
+    dispenserServoA.attach(DISPENSER_SERVO_A_PIN);
+    dispenserServoB.attach(DISPENSER_SERVO_B_PIN);
 
-    servoA.write(0);
-    servoB.write(SERVO_B_RETRACT_POS);
+    // Start each positional servo at its configured home angle.
+    dispenserServoA.write(DISPENSER_SERVO_A_HOME_POS);
+
+    dispenserServoB.write(DISPENSER_SERVO_B_HOME_POS);
+
+    Serial.println("DEBUG:SERVOS_READY");
 }
 
-void rotate_servo_degrees(int degrees) {
+void move_servo_to(Servo &servo, const char *label, int position) {
 
-    // Continuous rotation servo version
-    servoA.write(180);
+    Serial.print("DEBUG:");
+    Serial.print(label);
+    Serial.print("_MOVE_TO=");
+    Serial.println(position);
 
-    delay(1000);
-
-    servoA.write(90);
+    servo.write(position);
+    delay(DISPENSER_SERVO_MOVE_DELAY_MS);
 }
