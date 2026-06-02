@@ -32,7 +32,7 @@ void loop() {
       Serial.println("Spinning Servo A");
 
       // Attach servo to pin 9
-      servoA.attach(9);
+      servoA.attach(26);
       servoAAttached = true;
 
       // Move one way
@@ -58,7 +58,7 @@ void loop() {
       Serial.println("Spinning Servo B");
 
       // Attach servo to pin 10
-      servoB.attach(10);
+      servoB.attach(28);
       servoBAttached = true;
 
       // Move one way

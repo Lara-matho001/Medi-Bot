@@ -3,13 +3,10 @@
 #include "servo_control.h"
 #include "dispense.h"
 
-// Stores the current stepper position after the dispenser has been homed.
-int dispenserCurrentStepPosition = 0;
-
 void setup() {
 
     // Start the serial connection first so setup debug messages are visible.
-    Serial.begin(SERIAL_BAUD);
+    Serial.begin(serial_baud);
     Serial.println("DEBUG:BOOT");
 
     // Prepare the stepper output pins before trying to move the carousel.
@@ -22,66 +19,43 @@ void setup() {
 
     // INPUT_PULLUP means the Arduino holds the pin HIGH until the sensor pulls it LOW.
     Serial.println("DEBUG:INIT_IR_SENSORS");
-    pinMode(IR_HOMEING_PIN, INPUT_PULLUP);
-    pinMode(IR_PILL_DETECTION_PIN, INPUT_PULLUP);
+    pinMode(ir_homing_pin, INPUT_PULLUP);
+    pinMode(ir_pill_detection_pin, INPUT_PULLUP);
+    pinMode(ir_medication_cup_pin, INPUT_PULLUP);
 
     // Let the controller/computer know the dispenser sketch has booted.
     Serial.println("ARDUINO_READY");
     Serial.println("DEBUG:READY_FOR_COMMANDS");
-    Serial.println("Type DISPENSE:<slot>");
+    Serial.println("Send slot number 1-5 to dispense.");
 }
 
 void loop() {
 
-    // Commands arrive as one line of text, for example: DISPENSE:2
+    // Commands are a single digit 1-5 selecting the compartment slot.
     if (Serial.available()) {
 
         String raw = Serial.readStringUntil('\n');
-
-        // Remove spaces, carriage returns, and newline leftovers.
         raw.trim();
 
         Serial.print("DEBUG:RAW_CMD=");
         Serial.println(raw);
 
-        // Commands may have a parameter after a colon.
-        int separator = raw.indexOf(':');
+        if (raw.length() == 1 && raw[0] >= '1' && raw[0] <= '5') {
 
-        String verb;
-        String param;
-
-        if (separator != -1) {
-
-            // Example: "DISPENSE:2" becomes verb="DISPENSE", param="2".
-            verb = raw.substring(0, separator);
-            param = raw.substring(separator + 1);
-        }
-        else {
-
-            verb = raw;
-        }
-
-        Serial.print("DEBUG:VERB=");
-        Serial.println(verb);
-        Serial.print("DEBUG:PARAM=");
-        Serial.println(param);
-
-        if (verb == "DISPENSE") {
-
-            // Convert the slot number text into an integer and run the full dispense process.
-            int compartment_id = param.toInt();
+            // User sends 1-5; internal compartment index is 0-4.
+            int compartment_id = raw.toInt() - 1;
 
             Serial.print("DEBUG:DISPENSE_REQUEST_SLOT=");
             Serial.println(compartment_id);
 
-            handle_dispense(compartment_id);
+            dispense_compartment(compartment_id);
         }
         else {
 
-            // Anything else is not part of this sketch's command set.
             Serial.print("DEBUG:UNKNOWN_CMD=");
             Serial.println(raw);
             Serial.println("ERROR:UNKNOWN_CMD");
+            Serial.println("Send slot number 1-5 to dispense.");
         }
     }
 }

@@ -4,8 +4,8 @@
 #include <Servo.h>
 
 // Servo A spins the dispenser. Servo B engages/retracts the gear.
-extern Servo dispenserServoA;
-extern Servo dispenserServoB;
+extern Servo dispenser_servo_a;
+extern Servo dispenser_servo_b;
 
 // Attaches the servo objects to their configured pins and sets starting positions.
 void initialise_servos();

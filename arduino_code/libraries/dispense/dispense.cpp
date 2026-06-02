@@ -3,9 +3,9 @@
 #include "stepper_control.h"
 #include "servo_control.h"
 
-void count_chute_trigger(int &trigger_count) {
+void detect_chute_trigger(int &trigger_count) {
 
-    if (digitalRead(IR_PILL_DETECTION_PIN) != LOW) {
+    if (digitalRead(ir_pill_detection_pin) != LOW) {
         return;
     }
 
@@ -14,12 +14,12 @@ void count_chute_trigger(int &trigger_count) {
     Serial.println(trigger_count);
 
     unsigned long chute_blocked_start = millis();
-    while (digitalRead(IR_PILL_DETECTION_PIN) == LOW &&
-           millis() - chute_blocked_start < CHUTE_CLEAR_TIMEOUT_MS) {
+    while (digitalRead(ir_pill_detection_pin) == LOW &&
+           millis() - chute_blocked_start < chute_clear_timeout_ms) {
         delay(1);
     }
 
-    if (digitalRead(IR_PILL_DETECTION_PIN) == LOW) {
+    if (digitalRead(ir_pill_detection_pin) == LOW) {
         Serial.println("DEBUG:CHUTE_STILL_BLOCKED_TIMEOUT");
     }
     else {
@@ -33,7 +33,7 @@ void monitor_chute_for(int &trigger_count, unsigned long duration_ms) {
 
     unsigned long start_time = millis();
     while (millis() - start_time < duration_ms) {
-        count_chute_trigger(trigger_count);
+        detect_chute_trigger(trigger_count);
     }
 }
 
@@ -45,13 +45,13 @@ void move_servo_and_monitor(
 ) {
 
     move_servo_to(servo, label, position);
-    monitor_chute_for(trigger_count, SERVO_MOVE_DELAY_MS);
+    monitor_chute_for(trigger_count, servo_move_delay_ms);
 }
 
 void rotate_to_compartment(int compartment_id) {
 
     // Slot positions are tuned in motor_settings.h as steps clockwise from home.
-    int target_steps = DISPENSER_COMPARTMENT_STEPS[compartment_id];
+    int target_steps = dispenser_compartment_steps[compartment_id];
 
     Serial.print("DEBUG:ROTATE_TO_SLOT=");
     Serial.println(compartment_id);
@@ -61,14 +61,11 @@ void rotate_to_compartment(int compartment_id) {
     // Move clockwise by the calculated number of slot steps.
     stepper_step(true, target_steps);
 
-    // Remember where the carousel should now be.
-    dispenserCurrentStepPosition = target_steps;
-
     Serial.println("DEBUG:ROTATE_DONE");
 
     // Give the hardware a short moment to settle after movement.
     Serial.println("DEBUG:MOTOR_GAP_AFTER_STEPPER_ROTATE");
-    delay(DISPENSER_MOTOR_GAP_MS);
+    delay(dispenser_motor_gap_ms);
 }
 
 String run_dispense_cycle() {
@@ -77,44 +74,45 @@ String run_dispense_cycle() {
 
     // Count how many times a pill breaks the chute IR beam.
     int trigger_count = 0;
-    unsigned long window_start = millis();
 
     Serial.println("DEBUG:CHUTE_WATCH_START");
 
     Serial.println("DEBUG:SERVO_A_MOVE_ACTIVE_HOLD");
     move_servo_and_monitor(
-        dispenserServoA,
+        dispenser_servo_a,
         "SERVO_A",
-        DISPENSER_SERVO_A_ACTIVE_POS,
+        dispenser_servo_a_active_pos,
         trigger_count
     );
 
     Serial.println("DEBUG:SERVO_B_MOVE_ACTIVE");
     move_servo_and_monitor(
-        dispenserServoB,
+        dispenser_servo_b,
         "SERVO_B",
-        DISPENSER_SERVO_B_ACTIVE_POS,
+        dispenser_servo_b_active_pos,
         trigger_count
     );
 
     Serial.println("DEBUG:SERVO_B_RETURN_HOME");
     move_servo_and_monitor(
-        dispenserServoB,
+        dispenser_servo_b,
         "SERVO_B",
-        SERVO_B_HOME_POS,
+        servo_b_home_pos,
         trigger_count
     );
 
     Serial.println("DEBUG:SERVO_A_RETURN_HOME");
     move_servo_and_monitor(
-        dispenserServoA,
+        dispenser_servo_a,
         "SERVO_A",
-        SERVO_A_HOME_POS,
+        servo_a_home_pos,
         trigger_count
     );
 
-    while (millis() - window_start < DISPENSE_WINDOW_MS) {
-        count_chute_trigger(trigger_count);
+    // Servos are home. Monitor for any late-falling pills for the full post-dispense window.
+    unsigned long window_start = millis();
+    while (millis() - window_start < post_dispense_monitor_ms) {
+        detect_chute_trigger(trigger_count);
     }
 
     Serial.println("DEBUG:CHUTE_WATCH_END");
@@ -136,12 +134,31 @@ String run_dispense_cycle() {
     return "OVER_DISPENSE";
 }
 
-void handle_dispense(int compartment_id) {
+void wait_for_cup_taken() {
 
-    Serial.println("DEBUG:HANDLE_DISPENSE_START");
+    Serial.println("DEBUG:WAITING_FOR_CUP_TAKEN");
+
+    unsigned long start = millis();
+    while (millis() - start < cup_taken_timeout_ms) {
+
+        // With INPUT_PULLUP: LOW = cup blocking beam (present), HIGH = cup removed (taken).
+        if (digitalRead(ir_medication_cup_pin) == HIGH) {
+            Serial.println("COMPLETE");
+            return;
+        }
+
+        delay(50);
+    }
+
+    Serial.println("WARNING:CUP_NOT_TAKEN");
+}
+
+void dispense_compartment(int compartment_id) {
+
+    Serial.println("DEBUG:DISPENSE_COMPARTMENT_START");
 
     // Reject invalid slot numbers before moving any hardware.
-    if (compartment_id < 0 || compartment_id >= DISPENSER_SLOT_COUNT) {
+    if (compartment_id < 0 || compartment_id >= dispenser_slot_count) {
 
         Serial.print("DEBUG:BAD_COMPARTMENT=");
         Serial.println(compartment_id);
@@ -157,7 +174,7 @@ void handle_dispense(int compartment_id) {
     if (!success) {
 
         // home_stepper() already prints this error too, but keeping it here makes
-        // handle_dispense() report its own failure path clearly.
+        // dispense_compartment() report its own failure path clearly.
         Serial.println("ERROR:HOME_FAIL");
 
         return;
@@ -165,14 +182,12 @@ void handle_dispense(int compartment_id) {
     Serial.println("DEBUG:HOMING_OK");
 
     Serial.println("DEBUG:MOTOR_GAP_AFTER_HOMING");
-    delay(DISPENSER_MOTOR_GAP_MS);
+    delay(dispenser_motor_gap_ms);
 
     // Move from home to the requested pill compartment.
     rotate_to_compartment(compartment_id);
 
-    int attempt = 1;
-
-    while (true) {
+    for (int attempt = 1; attempt <= dispense_max_retries; attempt++) {
 
         Serial.print("DEBUG:DISPENSE_ATTEMPT=");
         Serial.println(attempt);
@@ -185,22 +200,31 @@ void handle_dispense(int compartment_id) {
 
         if (result == "OK") {
 
-            // One pill was detected.
+            // One pill was detected. Wait for the patient to take the cup.
             Serial.println("OK");
+            wait_for_cup_taken();
             return;
         }
         else if (result == "MISS") {
 
-            // No pill was detected, so try the same aligned compartment again.
-            Serial.println("RETRY");
-            Serial.println("DEBUG:MISS_RETRYING_DISPENSE_CYCLE");
+            if (attempt == dispense_max_retries) {
+
+                // All retries exhausted. Report failure and return to normal operation.
+                Serial.println("ERROR:MAX_RETRIES_REACHED");
+                return;
+            }
+
+            // No pill detected — retry the same aligned compartment.
+            Serial.print("DEBUG:MISS_RETRY_");
+            Serial.print(attempt);
+            Serial.print("_OF_");
+            Serial.println(dispense_max_retries);
             Serial.println("DEBUG:MOTOR_GAP_BEFORE_RETRY");
-            delay(DISPENSER_MOTOR_GAP_MS);
-            attempt++;
+            delay(dispenser_motor_gap_ms);
         }
         else if (result == "OVER_DISPENSE") {
 
-            // Multiple pills were detected, so stop until a human/controller resets it.
+            // Multiple pills detected — stop until a human/controller resets it.
             Serial.println("ERROR:MULTI_PILL");
 
             enter_halt_state();
