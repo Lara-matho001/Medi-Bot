@@ -2,36 +2,10 @@
 #include "config.h"
 #include "stepper_control.h"
 #include "servo_control.h"
-// RFID disabled for motor/dispense testing.
-// #include "rfid_control.h"
-
-// RFID disabled for motor/dispense testing.
-// void handle_rfid_scan() {
-//
-//     // millis() is used instead of delay() so this function can check repeatedly
-//     // until either a card is found or the timeout expires.
-//     unsigned long start_time = millis();
-//
-//     while (millis() - start_time < DISPENSER_RFID_SCAN_TIMEOUT_MS) {
-//
-//         if (rfid_card_present()) {
-//
-//             // Card detected: read the UID and send it back to the controller.
-//             String uid = rfid_read_uid();
-//
-//             Serial.println("RFID:" + uid);
-//
-//             return;
-//         }
-//     }
-//
-//     // No card was detected during the scan window.
-//     Serial.println("RFID:TIMEOUT");
-// }
 
 void count_chute_trigger(int &trigger_count) {
 
-    if (digitalRead(DISPENSER_IR_CHUTE_PIN) != LOW) {
+    if (digitalRead(IR_PILL_DETECTION_PIN) != LOW) {
         return;
     }
 
@@ -40,12 +14,12 @@ void count_chute_trigger(int &trigger_count) {
     Serial.println(trigger_count);
 
     unsigned long chute_blocked_start = millis();
-    while (digitalRead(DISPENSER_IR_CHUTE_PIN) == LOW &&
-           millis() - chute_blocked_start < DISPENSER_CHUTE_CLEAR_TIMEOUT_MS) {
+    while (digitalRead(IR_PILL_DETECTION_PIN) == LOW &&
+           millis() - chute_blocked_start < CHUTE_CLEAR_TIMEOUT_MS) {
         delay(1);
     }
 
-    if (digitalRead(DISPENSER_IR_CHUTE_PIN) == LOW) {
+    if (digitalRead(IR_PILL_DETECTION_PIN) == LOW) {
         Serial.println("DEBUG:CHUTE_STILL_BLOCKED_TIMEOUT");
     }
     else {
@@ -71,7 +45,7 @@ void move_servo_and_monitor(
 ) {
 
     move_servo_to(servo, label, position);
-    monitor_chute_for(trigger_count, DISPENSER_SERVO_MOVE_DELAY_MS);
+    monitor_chute_for(trigger_count, SERVO_MOVE_DELAY_MS);
 }
 
 void rotate_to_compartment(int compartment_id) {
@@ -127,7 +101,7 @@ String run_dispense_cycle() {
     move_servo_and_monitor(
         dispenserServoB,
         "SERVO_B",
-        DISPENSER_SERVO_B_HOME_POS,
+        SERVO_B_HOME_POS,
         trigger_count
     );
 
@@ -135,11 +109,11 @@ String run_dispense_cycle() {
     move_servo_and_monitor(
         dispenserServoA,
         "SERVO_A",
-        DISPENSER_SERVO_A_HOME_POS,
+        SERVO_A_HOME_POS,
         trigger_count
     );
 
-    while (millis() - window_start < DISPENSER_DISPENSE_WINDOW_MS) {
+    while (millis() - window_start < DISPENSE_WINDOW_MS) {
         count_chute_trigger(trigger_count);
     }
 

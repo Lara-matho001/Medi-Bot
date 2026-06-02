@@ -8,13 +8,13 @@ Servo dispenserServoB;
 void initialise_servos() {
 
     // Connect each Servo object to its physical Arduino pin.
-    dispenserServoA.attach(DISPENSER_SERVO_A_PIN);
-    dispenserServoB.attach(DISPENSER_SERVO_B_PIN);
+    dispenserServoA.attach(SERVO_A_PIN);
+    dispenserServoB.attach(SERVO_B_PIN);
 
     // Start each positional servo at its configured home angle.
-    dispenserServoA.write(DISPENSER_SERVO_A_HOME_POS);
+    dispenserServoA.write(SERVO_A_HOME_POS);
 
-    dispenserServoB.write(DISPENSER_SERVO_B_HOME_POS);
+    dispenserServoB.write(SERVO_B_HOME_POS);
 
     Serial.println("DEBUG:SERVOS_READY");
 }
@@ -27,5 +27,5 @@ void move_servo_to(Servo &servo, const char *label, int position) {
     Serial.println(position);
 
     servo.write(position);
-    delay(DISPENSER_SERVO_MOVE_DELAY_MS);
+    delay(SERVO_MOVE_DELAY_MS);
 }
