@@ -62,18 +62,16 @@ time.sleep(2)
 def normalise_rfid(rfid):
     return rfid.replace("RFID:", "").replace("UID:", "").strip().upper()
 
-def wait_for_rfid_scan():
-    print("Waiting for RFID scan...")
 
-    while True:
-        line = arduino.readline().decode(errors="ignore").strip()
+def update_status(job_id, status):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE schedules SET status = ? WHERE id = ?", (status, job_id))
+    conn.commit()
+    conn.close()
 
-        if line.startswith("RFID:") or line.startswith("UID:"):
-            scanned_rfid = normalise_rfid(line)
-            print("Scanned RFID:", scanned_rfid)
-            return scanned_rfid
 
-def verify_rfid_for_room(room):
+def wait_for_correct_rfid(room, job_id):
     conn = get_db()
     c = conn.cursor()
 
@@ -84,25 +82,42 @@ def verify_rfid_for_room(room):
 
     if result is None:
         print("No RFID found for room", room)
+        update_status(job_id, "No RFID Found")
         return False
 
     expected_rfid = normalise_rfid(result[0])
-    scanned_rfid = wait_for_rfid_scan()
+    print("Expected RFID for room", room, ":", expected_rfid)
+    print("Waiting for RFID scan...")
 
-    print("Expected RFID:", expected_rfid)
+    while True:
+        line = arduino.readline().decode(errors="ignore").strip()
 
-    if scanned_rfid == expected_rfid:
-        arduino.write(b"CORRECT\n")
-        print("Correct RFID")
-        return True
-    else:
-        arduino.write(b"WRONG\n")
-        print("Wrong RFID")
-        return False
+        if line == "":
+            continue
+
+        print("Arduino says:", line)
+
+        if line.startswith("RFID:") or line.startswith("UID:"):
+            scanned_rfid = normalise_rfid(line)
+            print("Scanned RFID:", scanned_rfid)
+
+            if scanned_rfid == expected_rfid:
+                arduino.write(b"CORRECT\n")
+                print("Correct RFID")
+                update_status(job_id, "RFID Correct")
+                return True
+
+            else:
+                arduino.write(b"WRONG\n")
+                print("Wrong RFID - buzzer activated")
+                update_status(job_id, "Wrong RFID - Scan Again")
+                # Do not return. Keep scanning again.
+
 
 def scheduler_loop():
     while True:
         now = datetime.now().strftime("%H:%M")
+        print("Checking schedules at:", now)
 
         conn = get_db()
         c = conn.cursor()
@@ -115,22 +130,17 @@ def scheduler_loop():
         """, (now,))
 
         jobs = c.fetchall()
+        conn.close()
 
         for job_id, room in jobs:
-            c.execute("UPDATE schedules SET status = 'Waiting for RFID' WHERE id = ?", (job_id,))
-            conn.commit()
+            update_status(job_id, "Waiting for RFID")
 
-            correct = verify_rfid_for_room(room)
+            correct = wait_for_correct_rfid(room, job_id)
 
             if correct:
-                c.execute("UPDATE schedules SET status = 'RFID Correct' WHERE id = ?", (job_id,))
-                # Later add dispense command here:
+                print("Ready to dispense later")
+                # Later:
                 # arduino.write(b"DISPENSE\n")
-            else:
-                c.execute("UPDATE schedules SET status = 'Wrong RFID' WHERE id = ?", (job_id,))
-
-        conn.commit()
-        conn.close()
 
         time.sleep(10)
 
@@ -461,7 +471,7 @@ def add_patient():
     name = request.form["name"]
     room = request.form["room"]
     medication = request.form["medication"]
-    rfid = request.form["rfid"]
+    rfid = normalise_rfid(request.form["rfid"])
 
     conn = get_db()
     c = conn.cursor()
@@ -521,7 +531,7 @@ def update_patient(patient_id):
     name = request.form["name"]
     room = request.form["room"]
     medication = request.form["medication"]
-    rfid = request.form["rfid"]
+    rfid = normalise_rfid(request.form["rfid"])
 
     conn = get_db()
     c = conn.cursor()
