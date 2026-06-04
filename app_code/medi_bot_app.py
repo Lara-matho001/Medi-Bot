@@ -28,9 +28,16 @@ from markupsafe import Markup
 DB_PATH = "patients.db"
 
 # --- Arduino ---
+# 57600 matches the ROSArduinoBridge BAUDRATE used by the combined
+# medi_bot_controller firmware. Commands are terminated with a carriage
+# return ('\r') — the firmware's serial parser acts on CR, not newline.
 SERIAL_PORT    = "/dev/ttyACM0"
-SERIAL_BAUD    = 9600
+SERIAL_BAUD    = 57600
 SERIAL_TIMEOUT = 1
+
+# Longest time to wait for a dispense to finish: homing + up to 5 retries +
+# up to a 30 s wait for the patient to take the cup.
+DISPENSE_TIMEOUT = 120
 
 # --- Flask ---
 FLASK_HOST = "0.0.0.0"
@@ -167,13 +174,25 @@ def connect_arduino():
     global arduino, arduino_connected
     try:
         arduino = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=SERIAL_TIMEOUT)
-        time.sleep(2)
+        time.sleep(2)                 # allow the board to reset after opening the port
+        arduino.reset_input_buffer()  # discard the boot / RFID version chatter
         arduino_connected = True
         print(f"Arduino connected on {SERIAL_PORT}")
     except serial.SerialException as e:
         arduino_connected = False
         print(f"Warning: Arduino not available — {e}")
         print("Running without hardware. RFID verification will be skipped.")
+
+
+def send_command(text):
+    """
+    Send one command line to the Arduino, terminated with a carriage return.
+    The medi_bot_controller firmware (ROSArduinoBridge protocol) parses
+    commands on CR, so every command must end with '\\r', not '\\n'.
+    """
+    if arduino is None:
+        return
+    arduino.write((text + "\r").encode())
 
 
 def normalise_rfid(rfid):
@@ -184,6 +203,7 @@ def normalise_rfid(rfid):
 def wait_for_rfid_scan():
     """Block until a valid RFID line is received from the Arduino."""
     print("Waiting for RFID scan...")
+    arduino.reset_input_buffer()  # ignore buffered tags; wait for a fresh scan
     while True:
         line = arduino.readline().decode(errors="ignore").strip()
         if line.startswith("RFID:") or line.startswith("UID:"):
@@ -216,11 +236,51 @@ def verify_rfid_for_room(room):
     print(f"Expected: {expected} | Got: {scanned}")
 
     if scanned == expected:
-        arduino.write(b"CORRECT\n")
+        # Correct patient: nothing to send here — the scheduler proceeds to
+        # send the dispense command for this delivery.
         return True
 
-    arduino.write(b"WRONG\n")
+    # Wrong patient: sound the buzzer (BUZZER_ALERT 'z' on the Arduino).
+    send_command("z")
     return False
+
+
+def dispense_pill(slot):
+    """
+    Ask the Arduino to dispense one pill from `slot` (1-5) and wait for the
+    outcome. Returns one of:
+        "COMPLETE"       - pill dropped and the cup was taken
+        "CUP_NOT_TAKEN"  - pill dropped but the cup was not removed in time
+        "ERROR"          - the dispense failed (jam, empty slot, multi-pill, ...)
+        "TIMEOUT"        - no terminal reply within DISPENSE_TIMEOUT
+        "NO_ARDUINO"     - no serial connection
+    A pill physically dropped for both "COMPLETE" and "CUP_NOT_TAKEN".
+    """
+    if arduino is None:
+        return "NO_ARDUINO"
+
+    arduino.reset_input_buffer()
+    send_command(f"D {slot}")  # DISPENSE_PILL command, e.g. "D 3"
+    print(f"Dispensing slot {slot}...")
+
+    deadline = time.time() + DISPENSE_TIMEOUT
+    while time.time() < deadline:
+        line = arduino.readline().decode(errors="ignore").strip()
+        if not line:
+            continue  # readline timed out (1 s); keep waiting until the deadline
+        print("  Arduino:", line)
+
+        if line == "COMPLETE":
+            return "COMPLETE"
+        if line == "WARNING:CUP_NOT_TAKEN":
+            return "CUP_NOT_TAKEN"
+        if line.startswith("ERROR"):
+            # ERROR:MULTI_PILL leaves the firmware halted until it gets RESET.
+            if "MULTI_PILL" in line:
+                send_command("RESET")
+            return "ERROR"
+
+    return "TIMEOUT"
 
 
 # ==============================================================================
@@ -270,24 +330,33 @@ def scheduler_loop():
 
             rfid_ok = verify_rfid_for_room(room)
 
-            if rfid_ok and medication_id:
-                c.execute(
-                    "UPDATE medications SET stock = MAX(0, stock - 1) WHERE id = ?",
-                    (medication_id,),
-                )
-                # TODO: trigger dispense command: arduino.write(b"DISPENSE\n")
+            if not rfid_ok:
+                outcome = "Wrong RFID"
+            elif medication_id:
+                # Correct patient — dispense one pill from the medication's slot.
+                result = dispense_pill(medication_id)
+                if result in ("COMPLETE", "CUP_NOT_TAKEN"):
+                    # A pill physically dropped, so decrement the slot's stock.
+                    c.execute(
+                        "UPDATE medications SET stock = MAX(0, stock - 1) WHERE id = ?",
+                        (medication_id,),
+                    )
+                    outcome = "Delivered" if result == "COMPLETE" else "Dispensed (cup not taken)"
+                else:
+                    outcome = "Dispense Error"
+            else:
+                outcome = "RFID Correct"  # verified, but no medication slot on this schedule
 
             if is_recurring:
                 c.execute(
                     "UPDATE schedules SET status = 'Pending', last_triggered_date = ? WHERE id = ?",
                     (today, job_id),
                 )
-                print(f"Recurring job {job_id} (room {room}): {'RFID Correct' if rfid_ok else 'Wrong RFID'}")
+                print(f"Recurring job {job_id} (room {room}): {outcome}")
             else:
-                status = "RFID Correct" if rfid_ok else "Wrong RFID"
                 c.execute(
                     "UPDATE schedules SET status = ? WHERE id = ?",
-                    (status, job_id),
+                    (outcome, job_id),
                 )
 
         conn.commit()
@@ -673,9 +742,11 @@ NAV = """
 def status_badge(text):
     """Jinja2 filter: wrap a schedule status string in a colour-coded badge."""
     t = (text or "").lower()
-    if "correct" in t:
+    if "not taken" in t:
+        css = "badge-waiting"
+    elif "delivered" in t or "dispensed" in t or "correct" in t:
         css = "badge-correct"
-    elif "wrong" in t:
+    elif "wrong" in t or "error" in t:
         css = "badge-wrong"
     elif "waiting" in t:
         css = "badge-waiting"
