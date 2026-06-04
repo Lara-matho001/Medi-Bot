@@ -53,13 +53,31 @@ def get_db():
 
 def init_db():
     """
-    Create tables, run any needed schema migrations, and seed default patients.
-
-    Safe to call on both a fresh database and an existing one from an older
-    version of the app — migrations add missing columns without losing data.
+    Create tables, run schema migrations, and seed default data.
+    Safe to run on both fresh and existing databases.
     """
     conn = get_db()
     c = conn.cursor()
+
+    # ── medications (5 fixed slots) ───────────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS medications (
+            id    INTEGER PRIMARY KEY,
+            name  TEXT    NOT NULL,
+            stock INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    c.execute("SELECT COUNT(*) FROM medications")
+    if c.fetchone()[0] == 0:
+        default_medications = [
+            (1, "Paracetamol",  0),
+            (2, "Aspirin",      0),
+            (3, "Ibuprofen",    0),
+            (4, "Amoxicillin",  0),
+            (5, "Metformin",    0),
+        ]
+        c.executemany("INSERT INTO medications (id, name, stock) VALUES (?,?,?)", default_medications)
 
     # ── patients ──────────────────────────────────────────────────────────────
     c.execute("""
@@ -68,20 +86,24 @@ def init_db():
             first_name TEXT NOT NULL,
             last_name  TEXT NOT NULL,
             room       TEXT NOT NULL,
-            medication TEXT NOT NULL,
             rfid       TEXT NOT NULL
         )
     """)
 
-    # Migration: older schema used a single "name" column
     c.execute("PRAGMA table_info(patients)")
     patient_cols = {row[1] for row in c.fetchall()}
 
+    # Migration: older schema had a single "name" column
     if "name" in patient_cols and "first_name" not in patient_cols:
         c.execute("ALTER TABLE patients ADD COLUMN first_name TEXT NOT NULL DEFAULT ''")
         c.execute("ALTER TABLE patients ADD COLUMN last_name  TEXT NOT NULL DEFAULT ''")
         c.execute("UPDATE patients SET first_name = name, last_name = ''")
         print("DB migration: patients.name → first_name + last_name")
+
+    # Migration: remove medication from patients (now managed separately)
+    if "medication" in patient_cols:
+        c.execute("ALTER TABLE patients DROP COLUMN medication")
+        print("DB migration: removed patients.medication")
 
     # ── schedules ─────────────────────────────────────────────────────────────
     c.execute("""
@@ -90,20 +112,22 @@ def init_db():
             patient_id          INTEGER NOT NULL,
             patient_name        TEXT,
             room                TEXT,
+            medication_id       INTEGER,
             medication          TEXT,
             delivery_date       TEXT,
             delivery_time       TEXT,
             recurring           INTEGER DEFAULT 0,
             last_triggered_date TEXT,
             status              TEXT,
-            FOREIGN KEY (patient_id) REFERENCES patients(id)
+            FOREIGN KEY (patient_id)    REFERENCES patients(id),
+            FOREIGN KEY (medication_id) REFERENCES medications(id)
         )
     """)
 
-    # Migration: add new columns if upgrading from older schema
     c.execute("PRAGMA table_info(schedules)")
     sched_cols = {row[1] for row in c.fetchall()}
     for col, defn in [
+        ("medication_id",       "INTEGER"),
         ("delivery_date",       "TEXT"),
         ("recurring",           "INTEGER DEFAULT 0"),
         ("last_triggered_date", "TEXT"),
@@ -112,18 +136,17 @@ def init_db():
             c.execute(f"ALTER TABLE schedules ADD COLUMN {col} {defn}")
             print(f"DB migration: added schedules.{col}")
 
-    # ── seed data ─────────────────────────────────────────────────────────────
+    # ── seed patients ─────────────────────────────────────────────────────────
     c.execute("SELECT COUNT(*) FROM patients")
     if c.fetchone()[0] == 0:
         seed = [
-            ("John",  "Smith", "101", "Paracetamol", "PATIENT001"),
-            ("Alice", "Jones", "102", "Aspirin",     "PATIENT002"),
-            ("Bob",   "Brown", "103", "Ibuprofen",   "PATIENT003"),
+            ("John",  "Smith", "101", "PATIENT001"),
+            ("Alice", "Jones", "102", "PATIENT002"),
+            ("Bob",   "Brown", "103", "PATIENT003"),
         ]
         for row in seed:
             c.execute(
-                "INSERT INTO patients (first_name, last_name, room, medication, rfid)"
-                " VALUES (?,?,?,?,?)",
+                "INSERT INTO patients (first_name, last_name, room, rfid) VALUES (?,?,?,?)",
                 row,
             )
 
@@ -208,12 +231,12 @@ def scheduler_loop():
     """
     Background thread: poll every 10 seconds for deliveries due right now.
 
-    One-time schedules: match by delivery_date (today) AND delivery_time.
-    Recurring schedules: match by delivery_time only, skipping days already
-                         triggered (tracked via last_triggered_date).
+    One-time  : match by delivery_date (today) AND delivery_time.
+    Recurring : match by delivery_time only; last_triggered_date prevents
+                re-firing on the same day.
 
-    After a recurring job completes, status resets to 'Pending' and
-    last_triggered_date is set to today so it does not fire again until tomorrow.
+    On a successful delivery the medication stock is decremented by one.
+    Recurring schedules reset to 'Pending' after each run.
     """
     while True:
         today = datetime.now().strftime("%Y-%m-%d")
@@ -222,7 +245,8 @@ def scheduler_loop():
         conn = get_db()
         c = conn.cursor()
         c.execute("""
-            SELECT schedules.id, patients.room, schedules.recurring
+            SELECT schedules.id, patients.room, schedules.recurring,
+                   schedules.medication_id
             FROM   schedules
             JOIN   patients ON schedules.patient_id = patients.id
             WHERE  schedules.delivery_time = ?
@@ -237,7 +261,7 @@ def scheduler_loop():
         """, (now, today, today))
         jobs = c.fetchall()
 
-        for job_id, room, is_recurring in jobs:
+        for job_id, room, is_recurring, medication_id in jobs:
             c.execute(
                 "UPDATE schedules SET status = 'Waiting for RFID' WHERE id = ?",
                 (job_id,),
@@ -246,27 +270,25 @@ def scheduler_loop():
 
             rfid_ok = verify_rfid_for_room(room)
 
+            if rfid_ok and medication_id:
+                c.execute(
+                    "UPDATE medications SET stock = MAX(0, stock - 1) WHERE id = ?",
+                    (medication_id,),
+                )
+                # TODO: trigger dispense command: arduino.write(b"DISPENSE\n")
+
             if is_recurring:
-                # Reset to Pending for tomorrow; record today so it won't re-fire
                 c.execute(
                     "UPDATE schedules SET status = 'Pending', last_triggered_date = ? WHERE id = ?",
                     (today, job_id),
                 )
-                result_label = "RFID Correct" if rfid_ok else "Wrong RFID"
-                print(f"Recurring job {job_id} (room {room}): {result_label}")
-                # TODO: trigger dispense on success: arduino.write(b"DISPENSE\n")
+                print(f"Recurring job {job_id} (room {room}): {'RFID Correct' if rfid_ok else 'Wrong RFID'}")
             else:
-                if rfid_ok:
-                    c.execute(
-                        "UPDATE schedules SET status = 'RFID Correct' WHERE id = ?",
-                        (job_id,),
-                    )
-                    # TODO: trigger dispense: arduino.write(b"DISPENSE\n")
-                else:
-                    c.execute(
-                        "UPDATE schedules SET status = 'Wrong RFID' WHERE id = ?",
-                        (job_id,),
-                    )
+                status = "RFID Correct" if rfid_ok else "Wrong RFID"
+                c.execute(
+                    "UPDATE schedules SET status = ? WHERE id = ?",
+                    (status, job_id),
+                )
 
         conn.commit()
         conn.close()
@@ -385,7 +407,7 @@ STYLE = """
     .home-card {
         background: white;
         color: #111;
-        width: 370px;
+        width: 340px;
         min-height: 210px;
         padding: 32px;
         border-radius: 22px;
@@ -398,8 +420,8 @@ STYLE = """
         box-shadow: 0 16px 40px rgba(0,0,0,0.32);
     }
 
-    .home-card h2 { font-size: 28px; margin-bottom: 12px; color: #0b1f3a; }
-    .home-card p  { font-size: 19px; color: #555; line-height: 1.45; }
+    .home-card h2 { font-size: 26px; margin-bottom: 12px; color: #0b1f3a; }
+    .home-card p  { font-size: 18px; color: #555; line-height: 1.45; }
 
     .main-button {
         display: block;
@@ -409,7 +431,7 @@ STYLE = """
         padding: 15px;
         border-radius: 13px;
         margin-top: 20px;
-        font-size: 21px;
+        font-size: 20px;
         font-weight: bold;
         text-decoration: none;
         transition: background 0.18s;
@@ -437,6 +459,7 @@ STYLE = """
         outline: none;
         transition: border-color 0.2s;
         color: #111;
+        background: white;
     }
 
     input:focus, select:focus { border-color: #0b1f3a; }
@@ -456,6 +479,42 @@ STYLE = """
     }
 
     button:hover { background: #1a3a6b; }
+
+    /* ── Small inputs and buttons (medications table) ── */
+    .input-sm {
+        width: auto;
+        padding: 11px 15px;
+        margin: 0;
+        font-size: 19px;
+        border-radius: 10px;
+        border: 2px solid #b8c4d1;
+        color: #111;
+        background: white;
+        outline: none;
+        transition: border-color 0.2s;
+    }
+
+    .input-sm:focus { border-color: #0b1f3a; }
+
+    .input-name  { min-width: 220px; }
+    .input-stock { width: 110px; }
+
+    .btn-sm {
+        width: auto;
+        padding: 11px 22px;
+        margin: 0;
+        font-size: 19px;
+        border-radius: 10px;
+        border: none;
+        background: #0b1f3a;
+        color: white;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background 0.18s;
+        display: inline-block;
+    }
+
+    .btn-sm:hover { background: #1a3a6b; }
 
     /* ── Side-by-side name fields ────────────────────── */
     .name-row {
@@ -568,6 +627,11 @@ STYLE = """
     .badge-recurring { background: #e9d8fd; color: #5b21b6; }
     .badge-default   { background: #e2e8f0; color: #444;    }
 
+    /* ── Stock level badges ──────────────────────────── */
+    .stock-ok    { background: #d4edda; color: #155724; padding: 4px 12px; border-radius: 16px; font-weight: bold; font-size: 18px; }
+    .stock-low   { background: #fff3cd; color: #856404; padding: 4px 12px; border-radius: 16px; font-weight: bold; font-size: 18px; }
+    .stock-empty { background: #f8d7da; color: #721c24; padding: 4px 12px; border-radius: 16px; font-weight: bold; font-size: 18px; }
+
     /* ── Confirmation card ───────────────────────────── */
     .confirm-card {
         background: #f2f6fb;
@@ -599,6 +663,7 @@ NAV = """
     <a href="/">Home</a>
     <a href="/schedule_page">Schedule</a>
     <a href="/patients">Patients</a>
+    <a href="/medications">Medications</a>
     <a href="/delivery_history">History</a>
 </nav>
 """
@@ -648,17 +713,22 @@ PAGE_HOME = (
         <div class="home-grid">
             <div class="home-card">
                 <h2>Schedule Delivery</h2>
-                <p>Select a patient, set the delivery date and time, and queue the task for the robot.</p>
+                <p>Select a patient and medication, set the delivery date and time, and queue the task.</p>
                 <a class="main-button" href="/schedule_page">Open Scheduler</a>
             </div>
             <div class="home-card">
                 <h2>Manage Patients</h2>
-                <p>Add, edit, or remove patient details including room number and medication.</p>
+                <p>Add, edit, or remove patient details including room number and RFID tag.</p>
                 <a class="main-button" href="/patients">Open Patients</a>
             </div>
             <div class="home-card">
+                <h2>Medications</h2>
+                <p>Manage the 5 medication slots, update names, and track pill stock levels.</p>
+                <a class="main-button" href="/medications">Open Medications</a>
+            </div>
+            <div class="home-card">
                 <h2>Delivery History</h2>
-                <p>View all scheduled deliveries, RFID verification results, and statuses.</p>
+                <p>View completed deliveries, RFID verification results, and statuses.</p>
                 <a class="main-button" href="/delivery_history">View History</a>
             </div>
         </div>
@@ -680,8 +750,15 @@ PAGE_SCHEDULE = (
                 <select name="patient_id">
                     {% for p in patients %}
                     <option value="{{ p[0] }}">
-                        #{{ p[0] }} — {{ p[1] }} {{ p[2] }} — Room {{ p[3] }} — {{ p[4] }}
+                        #{{ p[0] }} — {{ p[1] }} {{ p[2] }} — Room {{ p[3] }}
                     </option>
+                    {% endfor %}
+                </select>
+
+                <label>Select Medication:</label>
+                <select name="medication_id">
+                    {% for m in medications %}
+                    <option value="{{ m[0] }}">{{ m[0] }}. {{ m[1] }} ({{ m[2] }} pills remaining)</option>
                     {% endfor %}
                 </select>
 
@@ -723,11 +800,7 @@ PAGE_SCHEDULE = (
                     <td>{{ u[0] }}</td>
                     <td>{{ u[1] }}</td>
                     <td>{{ u[2] }}</td>
-                    <td>
-                        {% if u[5] %}—
-                        {% else %}{{ u[3] or '—' }}
-                        {% endif %}
-                    </td>
+                    <td>{% if u[5] %}—{% else %}{{ u[3] or '—' }}{% endif %}</td>
                     <td>{{ u[4] }}</td>
                     <td>
                         {% if u[5] %}
@@ -751,7 +824,6 @@ PAGE_SCHEDULE = (
         var dateRow   = document.getElementById('date_row');
         var dateInput = document.getElementById('delivery_date');
 
-        // Default to today's date
         var today = new Date();
         var yyyy  = today.getFullYear();
         var mm    = String(today.getMonth() + 1).padStart(2, '0');
@@ -770,7 +842,6 @@ PAGE_SCHEDULE = (
             }
         });
 
-        // Stop the check-row onclick from double-firing
         cb.addEventListener('click', function (e) { e.stopPropagation(); });
     })();
     </script>
@@ -828,11 +899,9 @@ PAGE_PATIENTS = (
                 </div>
 
                 <label>Room Number:</label>
-                <input name="room"       placeholder="e.g. 101"         required>
-                <label>Medication:</label>
-                <input name="medication" placeholder="e.g. Paracetamol" required>
+                <input name="room" placeholder="e.g. 101" required>
                 <label>RFID Tag ID:</label>
-                <input name="rfid"       placeholder="e.g. PATIENT004"  required>
+                <input name="rfid" placeholder="e.g. PATIENT004" required>
                 <button type="submit">Add Patient</button>
             </form>
         </div>
@@ -847,7 +916,6 @@ PAGE_PATIENTS = (
                     <th>First Name</th>
                     <th>Surname</th>
                     <th>Room</th>
-                    <th>Medication</th>
                     <th>RFID Tag</th>
                     <th>Actions</th>
                 </tr>
@@ -860,7 +928,6 @@ PAGE_PATIENTS = (
                     <td>{{ p[2] }}</td>
                     <td>{{ p[3] }}</td>
                     <td>{{ p[4] }}</td>
-                    <td>{{ p[5] }}</td>
                     <td>
                         <a class="darklink" href="/edit_patient/{{ p[0] }}">Edit</a>
                         <a class="danger-link" href="/delete_patient/{{ p[0] }}"
@@ -898,16 +965,76 @@ PAGE_EDIT_PATIENT = (
                 </div>
 
                 <label>Room:</label>
-                <input name="room"       value="{{ patient[3] }}" required>
-                <label>Medication:</label>
-                <input name="medication" value="{{ patient[4] }}" required>
+                <input name="room" value="{{ patient[3] }}" required>
                 <label>RFID Tag:</label>
-                <input name="rfid"       value="{{ patient[5] }}" required>
+                <input name="rfid" value="{{ patient[4] }}" required>
                 <button type="submit">Save Changes</button>
             </form>
         </div>
 
         <a href="/patients">← Back to Patients</a>
+    </div>
+    </body></html>
+    """
+)
+
+PAGE_MEDICATIONS = (
+    _HEAD + "<title>Medications</title>" + STYLE + "</head><body>" + NAV +
+    """
+    <div class="page">
+        <h1>Medication Management</h1>
+        <p class="subtitle">5 fixed medication slots — update names and stock levels as needed</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Slot</th>
+                    <th>Medication Name</th>
+                    <th>Stock (pills remaining)</th>
+                    <th>Update</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in medications %}
+                <tr>
+                    <td><strong>#{{ m[0] }}</strong></td>
+                    <td>
+                        <input form="med-form-{{ m[0] }}"
+                               class="input-sm input-name"
+                               name="name"
+                               value="{{ m[1] }}"
+                               required>
+                    </td>
+                    <td>
+                        <input form="med-form-{{ m[0] }}"
+                               class="input-sm input-stock"
+                               type="number"
+                               name="stock"
+                               value="{{ m[2] }}"
+                               min="0"
+                               required>
+                        &nbsp;
+                        {% if m[2] == 0 %}
+                        <span class="stock-empty">Empty</span>
+                        {% elif m[2] < 10 %}
+                        <span class="stock-low">Low</span>
+                        {% else %}
+                        <span class="stock-ok">OK</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form id="med-form-{{ m[0] }}"
+                              method="POST"
+                              action="/update_medication/{{ m[0] }}">
+                        </form>
+                        <button form="med-form-{{ m[0] }}" class="btn-sm" type="submit">
+                            Update
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
     </body></html>
     """
@@ -974,8 +1101,10 @@ def home():
 def schedule_page():
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, first_name, last_name, room, medication, rfid FROM patients")
+    c.execute("SELECT id, first_name, last_name, room, rfid FROM patients")
     patients = c.fetchall()
+    c.execute("SELECT id, name, stock FROM medications ORDER BY id")
+    medications = c.fetchall()
     c.execute("""
         SELECT patient_name, room, medication, delivery_date, delivery_time, recurring
         FROM   schedules
@@ -987,12 +1116,18 @@ def schedule_page():
     """)
     upcoming = c.fetchall()
     conn.close()
-    return render_template_string(PAGE_SCHEDULE, patients=patients, upcoming=upcoming)
+    return render_template_string(
+        PAGE_SCHEDULE,
+        patients=patients,
+        medications=medications,
+        upcoming=upcoming,
+    )
 
 
 @app.route("/schedule", methods=["POST"])
 def schedule():
     patient_id    = request.form["patient_id"]
+    medication_id = request.form["medication_id"]
     delivery_time = request.form["delivery_time"]
     recurring     = 1 if request.form.get("recurring") == "1" else 0
     delivery_date = request.form.get("delivery_date") or None
@@ -1002,17 +1137,22 @@ def schedule():
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "SELECT first_name, last_name, room, medication FROM patients WHERE id = ?",
+        "SELECT first_name, last_name, room FROM patients WHERE id = ?",
         (patient_id,),
     )
-    first_name, last_name, room, medication = c.fetchone()
+    first_name, last_name, room = c.fetchone()
     patient_name = f"{first_name} {last_name}".strip()
+
+    c.execute("SELECT name FROM medications WHERE id = ?", (medication_id,))
+    medication_name = c.fetchone()[0]
 
     c.execute(
         "INSERT INTO schedules"
-        " (patient_id, patient_name, room, medication, delivery_date, delivery_time, recurring, status)"
-        " VALUES (?,?,?,?,?,?,?,'Pending')",
-        (patient_id, patient_name, room, medication, delivery_date, delivery_time, recurring),
+        " (patient_id, patient_name, room, medication_id, medication,"
+        "  delivery_date, delivery_time, recurring, status)"
+        " VALUES (?,?,?,?,?,?,?,?,'Pending')",
+        (patient_id, patient_name, room, medication_id, medication_name,
+         delivery_date, delivery_time, recurring),
     )
     conn.commit()
     conn.close()
@@ -1021,7 +1161,7 @@ def schedule():
         PAGE_SCHEDULE_CONFIRM,
         patient_name=patient_name,
         room=room,
-        medication=medication,
+        medication=medication_name,
         delivery_date=delivery_date,
         delivery_time=delivery_time,
         recurring=recurring,
@@ -1032,7 +1172,7 @@ def schedule():
 def patients():
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, first_name, last_name, room, medication, rfid FROM patients")
+    c.execute("SELECT id, first_name, last_name, room, rfid FROM patients")
     patients_list = c.fetchall()
     conn.close()
     return render_template_string(PAGE_PATIENTS, patients=patients_list)
@@ -1043,14 +1183,13 @@ def add_patient():
     first_name = request.form["first_name"]
     last_name  = request.form["last_name"]
     room       = request.form["room"]
-    medication = request.form["medication"]
     rfid       = request.form["rfid"]
 
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO patients (first_name, last_name, room, medication, rfid) VALUES (?,?,?,?,?)",
-        (first_name, last_name, room, medication, rfid),
+        "INSERT INTO patients (first_name, last_name, room, rfid) VALUES (?,?,?,?)",
+        (first_name, last_name, room, rfid),
     )
     conn.commit()
     conn.close()
@@ -1062,7 +1201,7 @@ def edit_patient(patient_id):
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "SELECT id, first_name, last_name, room, medication, rfid FROM patients WHERE id = ?",
+        "SELECT id, first_name, last_name, room, rfid FROM patients WHERE id = ?",
         (patient_id,),
     )
     patient = c.fetchone()
@@ -1075,14 +1214,13 @@ def update_patient(patient_id):
     first_name = request.form["first_name"]
     last_name  = request.form["last_name"]
     room       = request.form["room"]
-    medication = request.form["medication"]
     rfid       = request.form["rfid"]
 
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "UPDATE patients SET first_name=?, last_name=?, room=?, medication=?, rfid=? WHERE id=?",
-        (first_name, last_name, room, medication, rfid, patient_id),
+        "UPDATE patients SET first_name=?, last_name=?, room=?, rfid=? WHERE id=?",
+        (first_name, last_name, room, rfid, patient_id),
     )
     conn.commit()
     conn.close()
@@ -1097,6 +1235,32 @@ def delete_patient(patient_id):
     conn.commit()
     conn.close()
     return redirect("/patients")
+
+
+@app.route("/medications")
+def medications():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id, name, stock FROM medications ORDER BY id")
+    meds = c.fetchall()
+    conn.close()
+    return render_template_string(PAGE_MEDICATIONS, medications=meds)
+
+
+@app.route("/update_medication/<int:med_id>", methods=["POST"])
+def update_medication(med_id):
+    name  = request.form["name"]
+    stock = int(request.form["stock"])
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        "UPDATE medications SET name=?, stock=? WHERE id=?",
+        (name, stock, med_id),
+    )
+    conn.commit()
+    conn.close()
+    return redirect("/medications")
 
 
 @app.route("/delivery_history")
