@@ -702,6 +702,47 @@ PAGE_SCHEDULE = (
                 <button type="submit">Schedule Delivery</button>
             </form>
         </div>
+
+        <h2>Upcoming Scheduled Doses</h2>
+
+        {% if upcoming %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Patient</th>
+                    <th>Room</th>
+                    <th>Medication</th>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Schedule</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in upcoming %}
+                <tr>
+                    <td>{{ u[0] }}</td>
+                    <td>{{ u[1] }}</td>
+                    <td>{{ u[2] }}</td>
+                    <td>
+                        {% if u[5] %}—
+                        {% else %}{{ u[3] or '—' }}
+                        {% endif %}
+                    </td>
+                    <td>{{ u[4] }}</td>
+                    <td>
+                        {% if u[5] %}
+                        <span class="badge badge-recurring">↻ Daily</span>
+                        {% else %}
+                        <span class="badge badge-pending">One-time</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">No upcoming doses scheduled.</div>
+        {% endif %}
     </div>
 
     <script>
@@ -879,7 +920,7 @@ PAGE_DELIVERY_HISTORY = (
     """
     <div class="page">
         <h1>Delivery History</h1>
-        <p class="subtitle">Refreshes automatically every 15 seconds</p>
+        <p class="subtitle">Completed and in-progress deliveries — refreshes every 15 seconds</p>
 
         {% if deliveries %}
         <table>
@@ -913,7 +954,7 @@ PAGE_DELIVERY_HISTORY = (
             </tbody>
         </table>
         {% else %}
-        <div class="empty-state">No deliveries scheduled yet.</div>
+        <div class="empty-state">No completed deliveries yet.</div>
         {% endif %}
     </div>
     </body></html>
@@ -935,8 +976,18 @@ def schedule_page():
     c = conn.cursor()
     c.execute("SELECT id, first_name, last_name, room, medication, rfid FROM patients")
     patients = c.fetchall()
+    c.execute("""
+        SELECT patient_name, room, medication, delivery_date, delivery_time, recurring
+        FROM   schedules
+        WHERE  status = 'Pending'
+        ORDER  BY
+            CASE WHEN recurring = 1 THEN 1 ELSE 0 END ASC,
+            delivery_date ASC,
+            delivery_time ASC
+    """)
+    upcoming = c.fetchall()
     conn.close()
-    return render_template_string(PAGE_SCHEDULE, patients=patients)
+    return render_template_string(PAGE_SCHEDULE, patients=patients, upcoming=upcoming)
 
 
 @app.route("/schedule", methods=["POST"])
@@ -1055,6 +1106,7 @@ def delivery_history():
     c.execute("""
         SELECT patient_name, room, medication, delivery_date, delivery_time, recurring, status
         FROM   schedules
+        WHERE  status != 'Pending'
         ORDER  BY id DESC
     """)
     deliveries = c.fetchall()
