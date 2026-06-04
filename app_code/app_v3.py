@@ -140,9 +140,9 @@ def init_db():
     c.execute("SELECT COUNT(*) FROM patients")
     if c.fetchone()[0] == 0:
         seed = [
-            ("John",  "Smith", "101", "PATIENT001"),
-            ("Alice", "Jones", "102", "PATIENT002"),
-            ("Bob",   "Brown", "103", "PATIENT003"),
+            ("John",  "Smith", "101", "37 C2 C4 01"),
+            ("Alice", "Jones", "102", "B4 1F 03 04"),
+            ("Bob",   "Brown", "103", "33 0A 47 03"),
         ]
         for row in seed:
             c.execute(
