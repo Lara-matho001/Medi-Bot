@@ -25,10 +25,10 @@ const unsigned long cup_taken_timeout_ms = 30000;
 
 // ----- Dispenser pin map (Arduino Mega 2560) -----
 // These pins are chosen so the dispenser does not clash with the base
-// controller. The ROSArduinoBridge base uses pins 5, 6, 9, 10 (motor PWM)
+// controller. The ROSArduinoBridge base uses pins 6, 7, 8, 9 (motor PWM)
 // plus its encoder pins. Its motor ENABLE lines were moved off pins 12/13
 // to spare pins (see motor_driver.h) so the IR sensors below can keep 12/13.
-// The RFID reader uses pins 7, 8, 50-53 and the buzzer pin 4 (see rfid_reader.h).
+// The RFID reader uses pins 4, 5, 50-53 and the buzzer pin 10 (see rfid_reader.h).
 
 // ----- IR sensors -----
 // IR sensors are wired with INPUT_PULLUP, so LOW means the sensor is triggered.

@@ -210,7 +210,7 @@ static void run_dispense_for_compartment(int compartment_id) {
     if (!success) {
 
         // home_stepper() already prints this error too, but keeping it here makes
-        // dispense_compartment() report its own failure path clearly.
+        // the dispense routine report its own failure path clearly.
         Serial.println("ERROR:HOME_FAIL");
 
         return;

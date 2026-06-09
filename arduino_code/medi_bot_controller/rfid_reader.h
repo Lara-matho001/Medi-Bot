@@ -22,7 +22,8 @@ const unsigned long rfid_report_interval_ms = 1000;
 // Buzzer alert tone (wrong patient / human intervention needed).
 const unsigned int buzzer_tone_hz = 1000;
 // Default beep length when "z" is sent with no duration. A duration can be given
-// as "z <ms>" (e.g. "z 3000" for the 3 s "all RFID attempts failed" beep).
+// as "z <ms>" (e.g. the Pi sends "z 3000" as the long centre beep of its
+// short/long/short "all RFID attempts failed" SOS).
 const unsigned long buzzer_short_ms = 300;
 
 // Powers up the RFID reader and prepares the buzzer pin.

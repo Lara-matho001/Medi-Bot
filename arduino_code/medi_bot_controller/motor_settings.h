@@ -49,7 +49,7 @@ const byte stepper_counterclockwise_state = LOW;
 const int servo_a_home_pos = 0;                 // Servo A rest angle
 const int dispenser_servo_a_active_pos = 180;   // Servo A dispense angle
 const int servo_b_home_pos = 0;                 // Servo B retracted (gear out)
-const int dispenser_servo_b_active_pos = 180;   // Servo B engaged (gear in)
+const int dispenser_servo_b_active_pos = 160;   // Servo B engaged (gear in)
 
 // Time to wait after each servo command so it can reach the angle before the
 // next move. HS-322HD turns ~60 degrees in ~0.15 s, so a full 180 sweep takes

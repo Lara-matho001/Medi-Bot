@@ -25,7 +25,7 @@ marked with `Medi-Bot` comments in `medi_bot_controller.ino`.
 | Command | Meaning | Arduino replies |
 | --- | --- | --- |
 | `D <slot>` | Dispense one pill from slot **1-5**, e.g. `D 3\r` | `DEBUG:...` progress, then `OK` and `COMPLETE` on success, or `ERROR:BAD_COMPARTMENT` / `ERROR:HOME_FAIL` / `ERROR:MAX_RETRIES_REACHED` / `ERROR:MULTI_PILL` |
-| `z` / `z <ms>` | Buzzer beep. `z` = short (~300 ms) wrong-patient/prompt beep; `z <ms>` beeps for `<ms>` (the Pi sends `z 3000` for the 3 s "all RFID attempts failed" alert) | `OK` |
+| `z` / `z <ms>` | One buzzer beep. `z` = the default ~300 ms beep; `z <ms>` beeps for `<ms>`. This is a single-beep primitive — the Pi strings several together (with gaps) to make the RFID patterns: 2 beeps to prompt, 3 short for a wrong tag, 1 long for a correct tag, and a short/long/short "SOS" when all attempts fail. | `OK` |
 | `RESET` | Only meaningful after an `ERROR:MULTI_PILL` halt; clears the safety stop | `DEBUG:RESET_RECEIVED_EXITING_HALT` |
 
 ### RFID (automatic, no command needed)
@@ -34,14 +34,14 @@ The reader polls continuously and prints every tag it sees as:
 RFID:04 A2 1B 8C
 ```
 rate-limited to about once per second. The Pi reads these lines, looks the UID up in
-its database, then sends `D <slot>` (correct patient) or `z` (wrong patient).
+its database, then sends `D <slot>` (correct patient) or buzzer beeps (wrong patient).
 
 ## Typical dispense flow (matches the project plan)
 1. Pi drives the robot to the patient using `m` / encoder commands.
 2. Patient scans tag → Arduino prints `RFID:...`.
 3. Pi verifies the UID against its database.
-   - Wrong → Pi sends `z` (beep).
-   - Correct → Pi sends the pills one at a time: `D 1\r`, wait for `COMPLETE`, `D 1\r`, wait, `D 3\r`, ...
+   - Wrong → Pi beeps the buzzer (`z <ms>` patterns: 3 short beeps for a wrong tag, an SOS when it gives up).
+   - Correct → Pi beeps once (long), then sends the pills one at a time: `D 1\r`, wait for `COMPLETE`, `D 1\r`, wait, `D 3\r`, ...
 
 ## Pin map (Arduino Mega 2560)
 
@@ -78,9 +78,17 @@ ever wire the enable lines to the Arduino, update these pin numbers accordingly.
   wait-for-cup (up to 30 s) before the loop resumes. Drive commands are not processed
   during a dispense, and the base auto-stops anyway (intended: the robot is parked at
   the patient while dispensing).
-- **Buzzer vs. drive PWM.** `tone()` uses Timer2, which on the Mega also drives PWM on
-  pins 9/10 (motor forward). Don't beep while driving forward; beeping while parked is
-  fine (the next motor command restores PWM).
+- **Motors hold for the whole dispense cycle.** A `D <slot>` energises the stepper and
+  servos for the entire cycle, so the carousel keeps its holding torque while the
+  dispense servos actuate — otherwise the servos knock the plate out of alignment. When
+  the cycle finishes, power to *all* motors is cut (stepper de-energised, servos
+  detached) so nothing holds or heats while idle. The stepper also boots de-energised
+  (it is re-homed at the start of every cycle). Exception: a `MULTI_PILL` halt keeps the
+  motors powered/holding until `RESET`, then releases them.
+- **Buzzer vs. drive PWM.** The buzzer is on pin 10 and `tone()` uses Timer2, which on
+  the Mega also drives PWM on pins 9/10. Pin 9 is the right motor's forward line, so a
+  beep suspends its PWM until the next motor command restores it. Don't beep while
+  driving forward; beeping while parked is fine.
 - **Encoders.** The ROSArduinoBridge `ARDUINO_ENC_COUNTER` pin-change interrupt code is
   written for an ATmega328 (Uno/Nano) `PORTD`/`PORTC` layout and was left unchanged per
   request. Verify encoder counting on your actual Mega wiring before relying on PID.

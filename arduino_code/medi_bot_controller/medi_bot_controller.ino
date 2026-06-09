@@ -255,8 +255,8 @@ int runCommand() {
     dispense_compartment(arg1 - 1);
     break;
   case BUZZER_ALERT:
-    // "z" -> short beep (wrong patient / prompt). "z <ms>" -> beep for <ms>,
-    // e.g. "z 3000" is the 3 s "all RFID attempts failed" alert.
+    // "z" -> the default short beep. "z <ms>" -> beep for <ms>. The Pi strings
+    // several of these together (with gaps) to make the RFID beep patterns.
     rfid_beep_alert(arg1 > 0 ? (unsigned long)arg1 : buzzer_short_ms);
     Serial.println("OK");
     break;
