@@ -132,6 +132,7 @@ def init_db():
             room                TEXT,
             medication_id       INTEGER,
             medication          TEXT,
+            quantity            INTEGER DEFAULT 1,
             delivery_date       TEXT,
             delivery_time       TEXT,
             recurring           INTEGER DEFAULT 0,
@@ -149,6 +150,7 @@ def init_db():
         ("delivery_date",       "TEXT"),
         ("recurring",           "INTEGER DEFAULT 0"),
         ("last_triggered_date", "TEXT"),
+        ("quantity",            "INTEGER DEFAULT 1"),
     ]:
         if col not in sched_cols:
             c.execute(f"ALTER TABLE schedules ADD COLUMN {col} {defn}")
@@ -410,6 +412,66 @@ def _run_scheduler_tick():
         conn.commit()
 
         rfid_ok = verify_rfid_for_room(room)
+        today = datetime.now().strftime("%Y-%m-%d")
+        now   = datetime.now().strftime("%H:%M")
+
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            SELECT schedules.id, patients.room, schedules.recurring,
+                   schedules.medication_id, schedules.quantity
+            FROM   schedules
+            JOIN   patients ON schedules.patient_id = patients.id
+            WHERE  schedules.delivery_time = ?
+              AND  schedules.status = 'Pending'
+              AND  (
+                       (schedules.recurring = 0 AND schedules.delivery_date = ?)
+                    OR (schedules.recurring = 1 AND (
+                           schedules.last_triggered_date IS NULL
+                        OR schedules.last_triggered_date != ?
+                       ))
+                   )
+        """, (now, today, today))
+        jobs = c.fetchall()
+
+        for job_id, room, is_recurring, medication_id, quantity in jobs:
+            c.execute(
+                "UPDATE schedules SET status = 'Waiting for RFID' WHERE id = ?",
+                (job_id,),
+            )
+            conn.commit()
+
+            rfid_ok = verify_rfid_for_room(room)
+
+            if not rfid_ok:
+                outcome = "Wrong RFID"
+            elif medication_id:
+                success_count = 0
+                final_result = "COMPLETE"
+
+                for i in range(quantity):
+                    print(f"Dispensing pill {i + 1} of {quantity}")
+                    final_result = dispense_pill(medication_id)
+
+                    if final_result in ("COMPLETE", "CUP_NOT_TAKEN"):
+                        success_count += 1
+                    else:
+                        break
+
+                if success_count > 0:
+                    c.execute(
+                        "UPDATE medications SET stock = MAX(0, stock - ?) WHERE id = ?",
+                        (success_count, medication_id),
+                    )
+
+                if success_count == quantity:
+                    outcome = "Delivered"
+                elif success_count > 0:
+                    outcome = f"Partially Delivered ({success_count}/{quantity})"
+                else:
+                    outcome = "Dispense Error"
+            else:
+                outcome = "RFID Correct"  # verified, but no medication slot on this schedule
 
         if not rfid_ok:
             outcome = "Wrong RFID"
@@ -912,6 +974,9 @@ PAGE_SCHEDULE = (
                     {% endfor %}
                 </select>
 
+                <label>Number of Pills:</label>
+                <input type="number" name="quantity" min="1" max="10" value="1" required>
+
                 <div id="date_row">
                     <label>Delivery Date:</label>
                     <input type="date" name="delivery_date" id="delivery_date" required>
@@ -1278,6 +1343,7 @@ def schedule_page():
 def schedule():
     patient_id    = request.form["patient_id"]
     medication_id = request.form["medication_id"]
+    quantity      = int(request.form["quantity"])
     delivery_time = request.form["delivery_time"]
     recurring     = 1 if request.form.get("recurring") == "1" else 0
     delivery_date = request.form.get("delivery_date") or None
@@ -1299,10 +1365,10 @@ def schedule():
     c.execute(
         "INSERT INTO schedules"
         " (patient_id, patient_name, room, medication_id, medication,"
-        "  delivery_date, delivery_time, recurring, status)"
-        " VALUES (?,?,?,?,?,?,?,?,'Pending')",
+        "  quantity, delivery_date, delivery_time, recurring, status)"
+        " VALUES (?,?,?,?,?,?,?,?,?,'Pending')",
         (patient_id, patient_name, room, medication_id, medication_name,
-         delivery_date, delivery_time, recurring),
+        quantity, delivery_date, delivery_time, recurring),
     )
     conn.commit()
     conn.close()
