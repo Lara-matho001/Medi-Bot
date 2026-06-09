@@ -188,6 +188,21 @@ void resetCommand() {
   index = 0;
 }
 
+/* ----------------------------------------------------------------------
+   Medi-Bot: protect the IR sensor pins from the raw pin-control commands.
+   The IR signal lines sit on ir_homing_pin / ir_pill_detection_pin /
+   ir_medication_cup_pin as INPUT_PULLUP (see setup()). The ROSArduinoBridge
+   raw commands x (analogWrite), w (digitalWrite), c (pinMode) and p (PING)
+   can reconfigure ANY pin as a driven OUTPUT. If one of them ever targets an
+   IR pin, the Arduino's output driver fights the sensor's output transistor
+   and can destroy the sensor. Refuse any raw pin command on a reserved pin.
+   ---------------------------------------------------------------------- */
+bool isReservedIrPin(long pin) {
+  return pin == ir_homing_pin
+      || pin == ir_pill_detection_pin
+      || pin == ir_medication_cup_pin;
+}
+
 /* Run a command.  Commands are defined in commands.h */
 int runCommand() {
   int i = 0;
@@ -208,20 +223,24 @@ int runCommand() {
     Serial.println(digitalRead(arg1));
     break;
   case ANALOG_WRITE:
+    if (isReservedIrPin(arg1)) { Serial.println("ERROR:RESERVED_IR_PIN"); break; }
     analogWrite(arg1, arg2);
     Serial.println("OK");
     break;
   case DIGITAL_WRITE:
+    if (isReservedIrPin(arg1)) { Serial.println("ERROR:RESERVED_IR_PIN"); break; }
     if (arg2 == 0) digitalWrite(arg1, LOW);
     else if (arg2 == 1) digitalWrite(arg1, HIGH);
     Serial.println("OK");
     break;
   case PIN_MODE:
+    if (isReservedIrPin(arg1)) { Serial.println("ERROR:RESERVED_IR_PIN"); break; }
     if (arg2 == 0) pinMode(arg1, INPUT);
     else if (arg2 == 1) pinMode(arg1, OUTPUT);
     Serial.println("OK");
     break;
   case PING:
+    if (isReservedIrPin(arg1)) { Serial.println("ERROR:RESERVED_IR_PIN"); break; }
     Serial.println(Ping(arg1));
     break;
 

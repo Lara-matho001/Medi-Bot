@@ -11,9 +11,8 @@ void initialise_servos() {
     dispenser_servo_a.attach(servo_a_pin);
     dispenser_servo_b.attach(servo_b_pin);
 
-    // Start each positional servo at its configured home angle.
+    // Standard positional servos: move each to its home angle at boot.
     dispenser_servo_a.write(servo_a_home_pos);
-
     dispenser_servo_b.write(servo_b_home_pos);
 
     Serial.println("DEBUG:SERVOS_READY");

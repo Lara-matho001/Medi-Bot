@@ -34,15 +34,26 @@ const byte stepper_enable_inactive_state = HIGH;
 const byte stepper_clockwise_state = HIGH;
 const byte stepper_counterclockwise_state = LOW;
 
-// Positional servo angles.
-// For standard PWM servos, write(180) means move to 180 degrees and hold.
-// write(0) means move back to 0 degrees and hold.
-const int servo_a_home_pos = 0;
-const int dispenser_servo_a_active_pos = 180;
-const int servo_b_home_pos = 0;
-const int dispenser_servo_b_active_pos = 180;
+// ===========================================================================
+// SERVO CONTROL
+//
+// The dispenser servos are Hitec HS-322HD — STANDARD POSITIONAL servos.
+// write(angle) moves the horn to that angle (roughly 0-180 degrees) and holds.
+// They do NOT spin continuously: a stock HS-322HD has ~180 degrees of travel
+// and internal stops. So the values below are physical ANGLES, not speeds.
+//
+// Tune the dispense motion by editing these angles and the per-move delay:
+//   - sweep too small/large  -> change the *_active_pos angle
+//   - servo not finished moving before the next step -> raise servo_move_delay_ms
+// ===========================================================================
+const int servo_a_home_pos = 0;                 // Servo A rest angle
+const int dispenser_servo_a_active_pos = 180;   // Servo A dispense angle
+const int servo_b_home_pos = 0;                 // Servo B retracted (gear out)
+const int dispenser_servo_b_active_pos = 180;   // Servo B engaged (gear in)
 
-// Time to wait after each positional servo command so the servo can reach its angle.
+// Time to wait after each servo command so it can reach the angle before the
+// next move. HS-322HD turns ~60 degrees in ~0.15 s, so a full 180 sweep takes
+// ~0.5 s; 1000 ms leaves a safe margin.
 const unsigned long servo_move_delay_ms = 1000;
 
 #endif

@@ -5,7 +5,7 @@ Combined Arduino firmware for the Medi-Bot. It merges three sketches into one:
 | Source sketch | What it contributes |
 | --- | --- |
 | `ros_arduino_bridge` | Differential-drive base controller (navigation), serial command protocol, encoders, PID. **Master protocol.** |
-| `dispense` | Rotary carousel stepper + 2 dispense servos + 3 IR sensors (homing, pill-detect, cup-taken). |
+| `dispense` | Rotary carousel stepper + 2 dispense servos + IR sensors (homing, pill-detect, cup-taken). **Pill-detect & cup IRs removed in this build — runs open-loop, see Caveats.** |
 | `finalrfid` | MFRC522 RFID patient verification + buzzer. |
 
 The ROSArduinoBridge files are kept byte-for-byte except for **one** change: the two
@@ -47,24 +47,33 @@ its database, then sends `D <slot>` (correct patient) or `z` (wrong patient).
 
 | Subsystem | Pins |
 | --- | --- |
-| Base motor PWM (L298) | 5, 6, 9, 10 |
-| Base motor enable (L298) | **30, 31** (moved from 12, 13 — see note) |
-| Base encoders | ROSArduinoBridge `PORTD`/`PORTC` pins (unchanged) |
-| Dispenser stepper (STEP/DIR/EN) | 23, 22, 24 |
-| Dispenser servos A / B | 26 / 28 |
-| IR homing / pill-detect / cup | 11 / 12 / 13 |
-| RFID MFRC522 (SS / RST) | 8 / 7 |
+| Base motor PWM (L298) | 6, 7, 9, 8 (backward, backward, forward, forward) |
+| Base motor enable (L298) | 34, 35 (not physically wired; tied HIGH on board) |
+| Base encoders | PORTD/PORTC pins (interrupt-driven; see encoder_driver.h) |
+| Dispenser stepper (STEP/DIR/EN) | 23 / 22 / 24 |
+| Dispenser servos A / B | 26 / 27 |
+| IR homing (only sensor fitted) | 13 — pill-detect (pin 11) & cup (pin 12) removed, see note |
+| RFID MFRC522 (SS / RST) | 4 / 5 |
 | RFID hardware SPI | 50 (MISO), 51 (MOSI), 52 (SCK), 53 held HIGH |
-| Buzzer | 4 |
+| Buzzer | 10 |
 
-### Note on motor-enable pins (the only ROS change)
-The L298 enable lines originally used pins **12 and 13**, which clash with the
-`ir_pill_detection_pin` (12) and `ir_medication_cup_pin` (13). Because the enable
-lines are not wired to the Arduino in this build (L298 ENA/ENB jumpers tied HIGH),
-`RIGHT_MOTOR_ENABLE` / `LEFT_MOTOR_ENABLE` were moved to spare pins **30 / 31** in
-`motor_driver.h`. If you ever wire the enables to the Arduino, repoint them there.
+### Note on motor-enable pins
+The L298 motor enable lines are not physically wired in this build (the L298 board
+has ENA/ENB jumpers tied HIGH). `RIGHT_MOTOR_ENABLE` / `LEFT_MOTOR_ENABLE` are set
+to unused pins **34 / 35** in `motor_driver.h` so the code compiles cleanly. If you
+ever wire the enable lines to the Arduino, update these pin numbers accordingly.
 
 ## Caveats / things to know
+- **Open-loop dispensing (no pill/cup IR).** After two IR sensors failed, the
+  pill-detection IR (pin 11) and cup IR (pin 12) were unplugged. The homing IR
+  moved to pin 13. With `HAVE_PILL_DETECT_IR 0` / `HAVE_CUP_IR 0` in `config.h`,
+  a `D <slot>` actuates the servos `forced_dispense_cycles` times (default **2**)
+  and *assumes* success — there is no MISS retry and no MULTI_PILL halt, so the
+  only `D` errors still possible are `ERROR:BAD_COMPARTMENT` and `ERROR:HOME_FAIL`.
+  After dispensing it waits `cup_assumed_taken_ms` (default 5 s) and prints
+  `COMPLETE`. **NOTE:** 2 actuations may drop 2 pills — set `forced_dispense_cycles`
+  to 1 for a single release. To return to full sensing, re-wire the sensors and
+  set the two flags back to `1`.
 - **Dispensing is blocking.** A `D <slot>` command runs homing → rotate → dispense →
   wait-for-cup (up to 30 s) before the loop resumes. Drive commands are not processed
   during a dispense, and the base auto-stops anyway (intended: the robot is parked at

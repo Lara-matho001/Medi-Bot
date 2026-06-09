@@ -3,6 +3,13 @@
 #include "stepper_control.h"
 #include "servo_control.h"
 
+#if HAVE_PILL_DETECT_IR
+// ===========================================================================
+// Sensor-based chute monitoring. Only compiled when the pill-detection IR is
+// fitted (HAVE_PILL_DETECT_IR == 1 in config.h). This is the original
+// closed-loop behaviour: count pills as they break the chute beam and retry a
+// miss / halt on an over-dispense.
+// ===========================================================================
 void detect_chute_trigger(int &trigger_count) {
 
     if (digitalRead(ir_pill_detection_pin) != LOW) {
@@ -46,26 +53,6 @@ void move_servo_and_monitor(
 
     move_servo_to(servo, label, position);
     monitor_chute_for(trigger_count, servo_move_delay_ms);
-}
-
-void rotate_to_compartment(int compartment_id) {
-
-    // Slot positions are tuned in motor_settings.h as steps clockwise from home.
-    int target_steps = dispenser_compartment_steps[compartment_id];
-
-    Serial.print("DEBUG:ROTATE_TO_SLOT=");
-    Serial.println(compartment_id);
-    Serial.print("DEBUG:TARGET_STEPS=");
-    Serial.println(target_steps);
-
-    // Move clockwise by the calculated number of slot steps.
-    stepper_step(true, target_steps);
-
-    Serial.println("DEBUG:ROTATE_DONE");
-
-    // Give the hardware a short moment to settle after movement.
-    Serial.println("DEBUG:MOTOR_GAP_AFTER_STEPPER_ROTATE");
-    delay(dispenser_motor_gap_ms);
 }
 
 String run_dispense_cycle() {
@@ -133,9 +120,52 @@ String run_dispense_cycle() {
     // More than one trigger means more than one pill probably dropped.
     return "OVER_DISPENSE";
 }
+#else
+// ===========================================================================
+// Open-loop dispense actuation (no pill-detection IR fitted). Drives the same
+// servo motion as the sensor-based cycle above, but reads no chute feedback.
+// The caller actuates this a fixed number of times and assumes success.
+// ===========================================================================
+static void run_dispense_servos() {
+
+    Serial.println("DEBUG:DISPENSE_SERVO_SEQUENCE_START");
+
+    // Positional sequence, order confirmed: engage gear, dispense, retract gear.
+    //   1) B -> engaged angle (gear in)
+    //   2) A -> dispense angle, then back to home (one full sweep)
+    //   3) B -> home angle (gear retracted)
+    move_servo_to(dispenser_servo_b, "SERVO_B", dispenser_servo_b_active_pos);
+    move_servo_to(dispenser_servo_a, "SERVO_A", dispenser_servo_a_active_pos);
+    move_servo_to(dispenser_servo_a, "SERVO_A", servo_a_home_pos);
+    move_servo_to(dispenser_servo_b, "SERVO_B", servo_b_home_pos);
+
+    Serial.println("DEBUG:DISPENSE_SERVO_SEQUENCE_DONE");
+}
+#endif  // HAVE_PILL_DETECT_IR
+
+void rotate_to_compartment(int compartment_id) {
+
+    // Slot positions are tuned in motor_settings.h as steps clockwise from home.
+    int target_steps = dispenser_compartment_steps[compartment_id];
+
+    Serial.print("DEBUG:ROTATE_TO_SLOT=");
+    Serial.println(compartment_id);
+    Serial.print("DEBUG:TARGET_STEPS=");
+    Serial.println(target_steps);
+
+    // Move clockwise by the calculated number of slot steps.
+    stepper_step(true, target_steps);
+
+    Serial.println("DEBUG:ROTATE_DONE");
+
+    // Give the hardware a short moment to settle after movement.
+    Serial.println("DEBUG:MOTOR_GAP_AFTER_STEPPER_ROTATE");
+    delay(dispenser_motor_gap_ms);
+}
 
 void wait_for_cup_taken() {
 
+#if HAVE_CUP_IR
     Serial.println("DEBUG:WAITING_FOR_CUP_TAKEN");
 
     unsigned long start = millis();
@@ -151,6 +181,14 @@ void wait_for_cup_taken() {
     }
 
     Serial.println("WARNING:CUP_NOT_TAKEN");
+#else
+    // No cup IR fitted: we cannot detect the cup being taken, so give the
+    // patient a fixed window (cup_assumed_taken_ms in config.h) and then assume
+    // it has been taken. This ends the cycle so the controller moves on.
+    Serial.println("DEBUG:CUP_IR_DISABLED_ASSUMING_TAKEN");
+    delay(cup_assumed_taken_ms);
+    Serial.println("COMPLETE");
+#endif
 }
 
 void dispense_compartment(int compartment_id) {
@@ -187,6 +225,7 @@ void dispense_compartment(int compartment_id) {
     // Move from home to the requested pill compartment.
     rotate_to_compartment(compartment_id);
 
+#if HAVE_PILL_DETECT_IR
     for (int attempt = 1; attempt <= dispense_max_retries; attempt++) {
 
         Serial.print("DEBUG:DISPENSE_ATTEMPT=");
@@ -231,6 +270,32 @@ void dispense_compartment(int compartment_id) {
             return;
         }
     }
+#else
+    // Open-loop: there is no pill-detection IR, so we cannot verify a drop or
+    // detect an over-dispense. Actuate the servos a fixed number of times
+    // (forced_dispense_cycles in config.h) and assume one pill is released per
+    // actuation. No retry/halt logic — every dispense is reported as success.
+    Serial.println("OK");
+
+    for (int cycle = 1; cycle <= forced_dispense_cycles; cycle++) {
+
+        Serial.print("DEBUG:DISPENSE_CYCLE=");
+        Serial.print(cycle);
+        Serial.print("_OF_");
+        Serial.println(forced_dispense_cycles);
+
+        run_dispense_servos();
+
+        // Brief gap between actuations so the mechanism settles.
+        if (cycle < forced_dispense_cycles) {
+            delay(dispenser_motor_gap_ms);
+        }
+    }
+
+    Serial.println("DEBUG:DISPENSE_ASSUMED_OK");
+    wait_for_cup_taken();
+    return;
+#endif  // HAVE_PILL_DETECT_IR
 }
 
 void enter_halt_state() {
