@@ -31,7 +31,7 @@ DB_PATH = "patients.db"
 # 57600 matches the ROSArduinoBridge BAUDRATE used by the combined
 # medi_bot_controller firmware. Commands are terminated with a carriage
 # return ('\r') — the firmware's serial parser acts on CR, not newline.
-SERIAL_PORT    = "/dev/ttyACM1"
+SERIAL_PORT    = "/dev/ttyACM0"
 SERIAL_BAUD    = 57600
 SERIAL_TIMEOUT = 1
 
