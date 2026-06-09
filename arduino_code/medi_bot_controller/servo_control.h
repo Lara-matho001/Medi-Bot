@@ -13,4 +13,10 @@ void initialise_servos();
 // Moves a positional servo to an angle and waits for it to arrive.
 void move_servo_to(Servo &servo, const char *label, int position);
 
+// (Re)attaches both servos for a dispense cycle so they hold their angle.
+void engage_servos();
+
+// Detaches both servos (stops PWM) so they draw no power once the cycle is done.
+void relax_servos();
+
 #endif

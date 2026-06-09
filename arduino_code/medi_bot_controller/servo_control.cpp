@@ -28,3 +28,21 @@ void move_servo_to(Servo &servo, const char *label, int position) {
     servo.write(position);
     delay(servo_move_delay_ms);
 }
+
+void engage_servos() {
+
+    // Re-attach the servos for a dispense cycle. Each one resumes holding the
+    // last angle it was commanded to (home, from the previous cycle or boot).
+    dispenser_servo_a.attach(servo_a_pin);
+    dispenser_servo_b.attach(servo_b_pin);
+}
+
+void relax_servos() {
+
+    // Detach both servos so the Arduino stops sending PWM pulses. The servos
+    // then draw no holding current and go limp — only do this once the dispense
+    // cycle is fully complete.
+    dispenser_servo_a.detach();
+    dispenser_servo_b.detach();
+    Serial.println("DEBUG:SERVOS_RELAXED");
+}

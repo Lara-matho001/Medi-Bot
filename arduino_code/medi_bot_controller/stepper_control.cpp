@@ -7,12 +7,26 @@ void initialise_stepper() {
     pinMode(stepper_direction_pin, OUTPUT);
     pinMode(stepper_enable_pin, OUTPUT);
 
-    // Start with the driver enabled so the motor can move and hold position.
-    digitalWrite(stepper_enable_pin, stepper_enable_active_state);
+    // Start with the driver DISABLED. The stepper is only energised for the
+    // duration of a dispense cycle (see dispense_compartment); keeping it off
+    // while idle avoids needless heat, and the carousel is re-homed at the start
+    // of every cycle so it never needs holding torque between cycles.
+    stepper_disable();
     digitalWrite(stepper_step_pin, LOW);
     digitalWrite(stepper_direction_pin, stepper_clockwise_state);
 
     Serial.println("DEBUG:STEPPER_READY");
+}
+
+void stepper_enable() {
+    // Energise the coils so the motor can move AND hold its current position.
+    digitalWrite(stepper_enable_pin, stepper_enable_active_state);
+}
+
+void stepper_disable() {
+    // De-energise the coils: the motor draws no holding current (no heat) and is
+    // free to be turned by hand. Only safe when nothing needs to hold the plate.
+    digitalWrite(stepper_enable_pin, stepper_enable_inactive_state);
 }
 
 void stepper_step(bool clockwise, int steps) {
@@ -29,7 +43,7 @@ void stepper_step(bool clockwise, int steps) {
     );
 
     // Make sure the driver is enabled before moving.
-    digitalWrite(stepper_enable_pin, stepper_enable_active_state);
+    stepper_enable();
 
     for (int i = 0; i < steps; i++) {
 
@@ -40,8 +54,10 @@ void stepper_step(bool clockwise, int steps) {
         delayMicroseconds(stepper_step_delay_us);
     }
 
-    // De-energise the coils after movement to prevent heat buildup while idle.
-    digitalWrite(stepper_enable_pin, stepper_enable_inactive_state);
+    // NOTE: the coils are deliberately left ENERGISED after a move so the
+    // carousel holds its position while the dispense servos actuate. The stepper
+    // is de-energised by stepper_disable() (via release_all_motors in
+    // dispense.cpp) only once the whole dispense cycle is complete.
 }
 
 bool home_stepper() {

@@ -191,9 +191,7 @@ void wait_for_cup_taken() {
 #endif
 }
 
-void dispense_compartment(int compartment_id) {
-
-    Serial.println("DEBUG:DISPENSE_COMPARTMENT_START");
+static void run_dispense_for_compartment(int compartment_id) {
 
     // Reject invalid slot numbers before moving any hardware.
     if (compartment_id < 0 || compartment_id >= dispenser_slot_count) {
@@ -296,6 +294,33 @@ void dispense_compartment(int compartment_id) {
     wait_for_cup_taken();
     return;
 #endif  // HAVE_PILL_DETECT_IR
+}
+
+static void release_all_motors() {
+
+    // Cycle fully complete: cut power to every motor so nothing holds or heats
+    // while the dispenser sits idle between deliveries.
+    Serial.println("DEBUG:RELEASE_ALL_MOTORS");
+    stepper_disable();
+    relax_servos();
+}
+
+void dispense_compartment(int compartment_id) {
+
+    Serial.println("DEBUG:DISPENSE_COMPARTMENT_START");
+
+    // Power the stepper AND servos for the WHOLE cycle. The stepper must keep its
+    // holding torque the entire time, otherwise the dispense servos knock the
+    // carousel plate out of position when they actuate. release_all_motors() cuts
+    // power to every motor once the cycle is fully complete, and runs on every
+    // exit path below (success, miss/retry exhaustion, bad slot, home fail, or
+    // after a multi-pill halt is cleared with RESET).
+    stepper_enable();
+    engage_servos();
+
+    run_dispense_for_compartment(compartment_id);
+
+    release_all_motors();
 }
 
 void enter_halt_state() {
