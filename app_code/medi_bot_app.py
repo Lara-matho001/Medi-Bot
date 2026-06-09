@@ -31,7 +31,7 @@ DB_PATH = "patients.db"
 # 57600 matches the ROSArduinoBridge BAUDRATE used by the combined
 # medi_bot_controller firmware. Commands are terminated with a carriage
 # return ('\r') — the firmware's serial parser acts on CR, not newline.
-SERIAL_PORT    = "/dev/ttyACM0"
+SERIAL_PORT    = "/dev/ttyACM1"
 SERIAL_BAUD    = 57600
 SERIAL_TIMEOUT = 1
 
@@ -255,17 +255,21 @@ def wait_for_rfid_scan(timeout):
 
 def verify_rfid_for_room(room):
     """
-    Verify the patient at `room` by RFID. Prompts with a short beep and listens
-    for a tag; returns True as soon as the correct tag is scanned.
+    Verify the patient at `room` by RFID. Returns a REASON string (not a bool) so
+    the scheduler can log honestly what happened:
+        "CORRECT"     - the expected tag was scanned
+        "WRONG"       - MAX_WRONG_SCANS different/wrong tags were scanned
+        "NO_SCAN"     - nobody scanned within the 120 s window
+        "NO_RFID"     - no RFID is registered for that room (a config problem,
+                        NOT a wrong tag)
+        "NO_ARDUINO"  - the reader/board is not connected
 
-    Gives up — long beep, returns False so the scheduler logs the delivery as
-    failed and moves on — after MAX_WRONG_SCANS wrong tags, or after
-    RFID_WINDOWS x RFID_WINDOW_SECONDS (120 s) with no correct scan. The robot
-    never blocks forever on one patient.
+    Prompts with a short beep while listening and a long beep when it gives up.
+    The robot never blocks forever on one patient.
     """
     if arduino is None:
-        print(f"Arduino unavailable — skipping RFID check for room {room}")
-        return False
+        print(f"Arduino unavailable — cannot verify room {room}")
+        return "NO_ARDUINO"
 
     conn = get_db()
     c = conn.cursor()
@@ -273,9 +277,10 @@ def verify_rfid_for_room(room):
     result = c.fetchone()
     conn.close()
 
-    if result is None:
+    # No matching patient, or the patient's RFID field is blank.
+    if result is None or not (result[0] or "").strip():
         print(f"No RFID registered for room {room}")
-        return False
+        return "NO_RFID"
 
     expected = normalise_rfid(result[0])
     print(f"Waiting for RFID scan (room {room}, expecting {expected})...")
@@ -295,7 +300,7 @@ def verify_rfid_for_room(room):
 
             if scanned == expected:
                 print("RFID correct.")
-                return True
+                return "CORRECT"
 
             wrong_scans += 1
             print(f"Wrong RFID ({wrong_scans}/{MAX_WRONG_SCANS}): got {scanned}")
@@ -304,11 +309,13 @@ def verify_rfid_for_room(room):
         if wrong_scans >= MAX_WRONG_SCANS:
             break
 
-    # All attempts failed: too many wrong tags, or 120 s with no correct scan.
-    print(f"RFID verification FAILED for room {room} "
-          f"({wrong_scans} wrong scan(s)).")
+    # Gave up. Long beep, then report WHY: wrong tag(s) vs. nobody scanned at all.
     beep_long()  # 3 s beep: all RFID attempts failed
-    return False
+    if wrong_scans > 0:
+        print(f"RFID FAILED for room {room}: {wrong_scans} wrong scan(s).")
+        return "WRONG"
+    print(f"RFID FAILED for room {room}: no scan within timeout.")
+    return "NO_SCAN"
 
 
 def dispense_pill(slot):
@@ -389,7 +396,7 @@ def _run_scheduler_tick():
     c = conn.cursor()
     c.execute("""
         SELECT schedules.id, patients.room, schedules.recurring,
-               schedules.medication_id
+               schedules.medication_id, schedules.quantity
         FROM   schedules
         JOIN   patients ON schedules.patient_id = patients.id
         WHERE  schedules.delivery_time = ?
@@ -404,91 +411,51 @@ def _run_scheduler_tick():
     """, (now, today, today))
     jobs = c.fetchall()
 
-    for job_id, room, is_recurring, medication_id in jobs:
+    for job_id, room, is_recurring, medication_id, quantity in jobs:
         c.execute(
             "UPDATE schedules SET status = 'Waiting for RFID' WHERE id = ?",
             (job_id,),
         )
         conn.commit()
 
-        rfid_ok = verify_rfid_for_room(room)
-        today = datetime.now().strftime("%Y-%m-%d")
-        now   = datetime.now().strftime("%H:%M")
+        reason = verify_rfid_for_room(room)
 
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("""
-            SELECT schedules.id, patients.room, schedules.recurring,
-                   schedules.medication_id, schedules.quantity
-            FROM   schedules
-            JOIN   patients ON schedules.patient_id = patients.id
-            WHERE  schedules.delivery_time = ?
-              AND  schedules.status = 'Pending'
-              AND  (
-                       (schedules.recurring = 0 AND schedules.delivery_date = ?)
-                    OR (schedules.recurring = 1 AND (
-                           schedules.last_triggered_date IS NULL
-                        OR schedules.last_triggered_date != ?
-                       ))
-                   )
-        """, (now, today, today))
-        jobs = c.fetchall()
-
-        for job_id, room, is_recurring, medication_id, quantity in jobs:
-            c.execute(
-                "UPDATE schedules SET status = 'Waiting for RFID' WHERE id = ?",
-                (job_id,),
-            )
-            conn.commit()
-
-            rfid_ok = verify_rfid_for_room(room)
-
-            if not rfid_ok:
-                outcome = "Wrong RFID"
-            elif medication_id:
-                success_count = 0
-                final_result = "COMPLETE"
-
-                for i in range(quantity):
-                    print(f"Dispensing pill {i + 1} of {quantity}")
-                    final_result = dispense_pill(medication_id)
-
-                    if final_result in ("COMPLETE", "CUP_NOT_TAKEN"):
-                        success_count += 1
-                    else:
-                        break
-
-                if success_count > 0:
-                    c.execute(
-                        "UPDATE medications SET stock = MAX(0, stock - ?) WHERE id = ?",
-                        (success_count, medication_id),
-                    )
-
-                if success_count == quantity:
-                    outcome = "Delivered"
-                elif success_count > 0:
-                    outcome = f"Partially Delivered ({success_count}/{quantity})"
+        if reason != "CORRECT":
+            # Honest label per failure reason — "Wrong RFID" only for a real
+            # wrong tag, never for a no-show, missing config, or offline board.
+            outcome = {
+                "WRONG":      "Wrong RFID",
+                "NO_SCAN":    "No Scan (timeout)",
+                "NO_RFID":    "No RFID on file",
+                "NO_ARDUINO": "Arduino offline",
+            }.get(reason, "RFID Failed")
+        elif not medication_id:
+            outcome = "RFID Correct"  # verified, but no medication slot on this schedule
+        else:
+            # Correct patient — dispense `quantity` pills, count how many drop,
+            # and decrement stock by the number that actually dropped.
+            qty = quantity or 1
+            dropped = 0
+            for i in range(qty):
+                print(f"Dispensing pill {i + 1} of {qty} (slot {medication_id})")
+                result = dispense_pill(medication_id)
+                if result in ("COMPLETE", "CUP_NOT_TAKEN"):
+                    dropped += 1
                 else:
-                    outcome = "Dispense Error"
-            else:
-                outcome = "RFID Correct"  # verified, but no medication slot on this schedule
+                    break  # jam / error — stop early
 
-        if not rfid_ok:
-            outcome = "Wrong RFID"
-        elif medication_id:
-            # Correct patient — dispense one pill from the medication's slot.
-            result = dispense_pill(medication_id)
-            if result in ("COMPLETE", "CUP_NOT_TAKEN"):
-                # A pill physically dropped, so decrement the slot's stock.
+            if dropped > 0:
                 c.execute(
-                    "UPDATE medications SET stock = MAX(0, stock - 1) WHERE id = ?",
-                    (medication_id,),
+                    "UPDATE medications SET stock = MAX(0, stock - ?) WHERE id = ?",
+                    (dropped, medication_id),
                 )
-                outcome = "Delivered" if result == "COMPLETE" else "Dispensed (cup not taken)"
+
+            if dropped == qty:
+                outcome = "Delivered"
+            elif dropped > 0:
+                outcome = f"Partially Delivered ({dropped}/{qty})"
             else:
                 outcome = "Dispense Error"
-        else:
-            outcome = "RFID Correct"  # verified, but no medication slot on this schedule
 
         if is_recurring:
             c.execute(
