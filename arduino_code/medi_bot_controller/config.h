@@ -37,9 +37,9 @@ const byte ir_pill_detection_pin = 12;
 const byte ir_medication_cup_pin = 13;
 
 // Servo A spins the dispensing mechanism. Servo B engages/retracts the gear.
-// pins 26 & 28
+// pins 26 & 27
 const byte servo_a_pin = 26;
-const byte servo_b_pin = 28;
+const byte servo_b_pin = 27;
 
 // Stepper driver pins for a STEP/DIR/ENABLE style driver.
 // STEP receives one pulse for each motor step.

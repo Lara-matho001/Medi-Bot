@@ -47,22 +47,21 @@ its database, then sends `D <slot>` (correct patient) or `z` (wrong patient).
 
 | Subsystem | Pins |
 | --- | --- |
-| Base motor PWM (L298) | 5, 6, 9, 10 |
-| Base motor enable (L298) | **30, 31** (moved from 12, 13 — see note) |
-| Base encoders | ROSArduinoBridge `PORTD`/`PORTC` pins (unchanged) |
-| Dispenser stepper (STEP/DIR/EN) | 23, 22, 24 |
-| Dispenser servos A / B | 26 / 28 |
+| Base motor PWM (L298) | 6, 7, 9, 8 (backward, backward, forward, forward) |
+| Base motor enable (L298) | 34, 35 (not physically wired; tied HIGH on board) |
+| Base encoders | PORTD/PORTC pins (interrupt-driven; see encoder_driver.h) |
+| Dispenser stepper (STEP/DIR/EN) | 23 / 22 / 24 |
+| Dispenser servos A / B | 26 / 27 |
 | IR homing / pill-detect / cup | 11 / 12 / 13 |
-| RFID MFRC522 (SS / RST) | 8 / 7 |
+| RFID MFRC522 (SS / RST) | 4 / 5 |
 | RFID hardware SPI | 50 (MISO), 51 (MOSI), 52 (SCK), 53 held HIGH |
-| Buzzer | 4 |
+| Buzzer | 10 |
 
-### Note on motor-enable pins (the only ROS change)
-The L298 enable lines originally used pins **12 and 13**, which clash with the
-`ir_pill_detection_pin` (12) and `ir_medication_cup_pin` (13). Because the enable
-lines are not wired to the Arduino in this build (L298 ENA/ENB jumpers tied HIGH),
-`RIGHT_MOTOR_ENABLE` / `LEFT_MOTOR_ENABLE` were moved to spare pins **30 / 31** in
-`motor_driver.h`. If you ever wire the enables to the Arduino, repoint them there.
+### Note on motor-enable pins
+The L298 motor enable lines are not physically wired in this build (the L298 board
+has ENA/ENB jumpers tied HIGH). `RIGHT_MOTOR_ENABLE` / `LEFT_MOTOR_ENABLE` are set
+to unused pins **34 / 35** in `motor_driver.h` so the code compiles cleanly. If you
+ever wire the enable lines to the Arduino, update these pin numbers accordingly.
 
 ## Caveats / things to know
 - **Dispensing is blocking.** A `D <slot>` command runs homing → rotate → dispense →
