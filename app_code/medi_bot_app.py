@@ -335,30 +335,30 @@ def scheduler_loop():
             if not rfid_ok:
                 outcome = "Wrong RFID"
             elif medication_id:
-            success_count = 0
-            final_result = "COMPLETE"
+                success_count = 0
+                final_result = "COMPLETE"
 
-            for i in range(quantity):
-                print(f"Dispensing pill {i + 1} of {quantity}")
-                final_result = dispense_pill(medication_id)
+                for i in range(quantity):
+                    print(f"Dispensing pill {i + 1} of {quantity}")
+                    final_result = dispense_pill(medication_id)
 
-                if final_result in ("COMPLETE", "CUP_NOT_TAKEN"):
-                    success_count += 1
+                    if final_result in ("COMPLETE", "CUP_NOT_TAKEN"):
+                        success_count += 1
+                    else:
+                        break
+
+                if success_count > 0:
+                    c.execute(
+                        "UPDATE medications SET stock = MAX(0, stock - ?) WHERE id = ?",
+                        (success_count, medication_id),
+                    )
+
+                if success_count == quantity:
+                    outcome = "Delivered"
+                elif success_count > 0:
+                    outcome = f"Partially Delivered ({success_count}/{quantity})"
                 else:
-                    break
-
-            if success_count > 0:
-                c.execute(
-                    "UPDATE medications SET stock = MAX(0, stock - ?) WHERE id = ?",
-                    (success_count, medication_id),
-                )
-
-            if success_count == quantity:
-                outcome = "Delivered"
-            elif success_count > 0:
-                outcome = f"Partially Delivered ({success_count}/{quantity})"
-            else:
-                outcome = "Dispense Error"
+                    outcome = "Dispense Error"
             else:
                 outcome = "RFID Correct"  # verified, but no medication slot on this schedule
 
