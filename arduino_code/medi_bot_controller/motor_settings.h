@@ -12,11 +12,11 @@ const int steps_per_rev = 200;
 // Edit these numbers while tuning the rotary plate.
 const byte dispenser_slot_count = 5;
 const int dispenser_compartment_steps[dispenser_slot_count] = {
-    8,    // compartment 0
-    48,   // compartment 1
-    88,   // compartment 2
-    128,  // compartment 3
-    168   // compartment 4
+    22,    // compartment 1
+    62,    // compartment 2
+    102,   // compartment 3
+    142,   // compartment 4
+    182    // compartment 5
 };
 
 // Controls stepper speed. Smaller delay = faster motor, but less torque.

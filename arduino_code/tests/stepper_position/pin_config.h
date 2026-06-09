@@ -9,6 +9,6 @@ const byte STEPPER_DIR_PIN = 22;
 const byte STEPPER_ENABLE_PIN = 24;
 
 // Home IR sensor. Uses INPUT_PULLUP, so LOW means the home marker is detected.
-const byte HOME_SENSOR_PIN = ;
+const byte HOME_SENSOR_PIN = 13;
 
 #endif

@@ -26,11 +26,11 @@ const unsigned long SETTLE_DELAY_MS = 3000;
 // Edit these numbers while tuning the rotary plate.
 const byte COMPARTMENT_COUNT = 5;
 const int COMPARTMENT_STEPS[COMPARTMENT_COUNT] = {
-    8,    // compartment 0
-    48,   // compartment 1
-    88,   // compartment 2
-    128,  // compartment 3
-    168   // compartment 4
+    22,    // compartment 1
+    62,   // compartment 2
+    102,   // compartment 3
+    142,  // compartment 4
+    182   // compartment 5
 };
 
 #endif
