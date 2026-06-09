@@ -70,13 +70,13 @@ void rfid_poll_and_report() {
     rfid.PCD_StopCrypto1();
 }
 
-void rfid_beep_alert() {
+void rfid_beep_alert(unsigned long duration_ms) {
 
     // NOTE: tone() uses Timer2, which on the Mega also drives PWM on pins 9
     // and 10 (the motor FORWARD lines). The beep is meant to sound while the
     // robot is stopped at a patient, so this is fine - the next motor command
     // re-enables PWM on those pins. Avoid beeping while driving forward.
     tone(buzzer_pin, buzzer_tone_hz);
-    delay(buzzer_alert_ms);
+    delay(duration_ms);
     noTone(buzzer_pin);
 }
