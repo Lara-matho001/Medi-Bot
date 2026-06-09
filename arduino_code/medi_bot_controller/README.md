@@ -5,7 +5,7 @@ Combined Arduino firmware for the Medi-Bot. It merges three sketches into one:
 | Source sketch | What it contributes |
 | --- | --- |
 | `ros_arduino_bridge` | Differential-drive base controller (navigation), serial command protocol, encoders, PID. **Master protocol.** |
-| `dispense` | Rotary carousel stepper + 2 dispense servos + 3 IR sensors (homing, pill-detect, cup-taken). |
+| `dispense` | Rotary carousel stepper + 2 dispense servos + IR sensors (homing, pill-detect, cup-taken). **Pill-detect & cup IRs removed in this build — runs open-loop, see Caveats.** |
 | `finalrfid` | MFRC522 RFID patient verification + buzzer. |
 
 The ROSArduinoBridge files are kept byte-for-byte except for **one** change: the two
@@ -52,7 +52,7 @@ its database, then sends `D <slot>` (correct patient) or `z` (wrong patient).
 | Base encoders | PORTD/PORTC pins (interrupt-driven; see encoder_driver.h) |
 | Dispenser stepper (STEP/DIR/EN) | 23 / 22 / 24 |
 | Dispenser servos A / B | 26 / 27 |
-| IR homing / pill-detect / cup | 11 / 12 / 13 |
+| IR homing (only sensor fitted) | 13 — pill-detect (pin 11) & cup (pin 12) removed, see note |
 | RFID MFRC522 (SS / RST) | 4 / 5 |
 | RFID hardware SPI | 50 (MISO), 51 (MOSI), 52 (SCK), 53 held HIGH |
 | Buzzer | 10 |
@@ -64,6 +64,16 @@ to unused pins **34 / 35** in `motor_driver.h` so the code compiles cleanly. If 
 ever wire the enable lines to the Arduino, update these pin numbers accordingly.
 
 ## Caveats / things to know
+- **Open-loop dispensing (no pill/cup IR).** After two IR sensors failed, the
+  pill-detection IR (pin 11) and cup IR (pin 12) were unplugged. The homing IR
+  moved to pin 13. With `HAVE_PILL_DETECT_IR 0` / `HAVE_CUP_IR 0` in `config.h`,
+  a `D <slot>` actuates the servos `forced_dispense_cycles` times (default **2**)
+  and *assumes* success — there is no MISS retry and no MULTI_PILL halt, so the
+  only `D` errors still possible are `ERROR:BAD_COMPARTMENT` and `ERROR:HOME_FAIL`.
+  After dispensing it waits `cup_assumed_taken_ms` (default 5 s) and prints
+  `COMPLETE`. **NOTE:** 2 actuations may drop 2 pills — set `forced_dispense_cycles`
+  to 1 for a single release. To return to full sensing, re-wire the sensors and
+  set the two flags back to `1`.
 - **Dispensing is blocking.** A `D <slot>` command runs homing → rotate → dispense →
   wait-for-cup (up to 30 s) before the loop resumes. Drive commands are not processed
   during a dispense, and the base auto-stops anyway (intended: the robot is parked at
