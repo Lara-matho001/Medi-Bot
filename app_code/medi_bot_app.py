@@ -35,9 +35,20 @@ SERIAL_PORT    = "/dev/ttyACM0"
 SERIAL_BAUD    = 57600
 SERIAL_TIMEOUT = 1
 
-# Longest time to wait for a dispense to finish: homing + up to 5 retries +
-# up to a 30 s wait for the patient to take the cup.
+# Longest time to wait for a dispense to finish: homing + carousel rotate + the
+# servo dispense cycles + the post-dispense cup wait. The open-loop firmware has
+# no retries, so 120 s is generous headroom.
 DISPENSE_TIMEOUT = 120
+
+# RFID verification at the patient. The Pi runs the timing/beeps; the Arduino
+# just reads tags and beeps when told. The robot prompts with a short beep, then
+# listens. It gives up — long beep, delivery logged as failed, move to the next
+# patient — after MAX_WRONG_SCANS wrong tags, OR RFID_WINDOWS x RFID_WINDOW_SECONDS
+# (120 s) with no correct scan. It never blocks forever on one patient.
+RFID_WINDOW_SECONDS = 60     # one listen window
+RFID_WINDOWS        = 2      # 2 x 60 s = 120 s total
+MAX_WRONG_SCANS     = 3      # wrong tags allowed before giving up
+RFID_LONG_BEEP_MS   = 3000   # 3 s "all attempts failed" beep
 
 # --- Flask ---
 FLASK_HOST = "0.0.0.0"
@@ -186,6 +197,19 @@ def connect_arduino():
         print("Running without hardware. RFID verification will be skipped.")
 
 
+def try_reconnect_arduino():
+    """Close any stale handle and try to reopen the serial port (best effort)."""
+    global arduino, arduino_connected
+    try:
+        if arduino is not None:
+            arduino.close()
+    except Exception:
+        pass
+    arduino = None
+    arduino_connected = False
+    connect_arduino()
+
+
 def send_command(text):
     """
     Send one command line to the Arduino, terminated with a carriage return.
@@ -202,22 +226,42 @@ def normalise_rfid(rfid):
     return rfid.replace("RFID:", "").replace("UID:", "").strip().upper()
 
 
-def wait_for_rfid_scan():
-    """Block until a valid RFID line is received from the Arduino."""
-    print("Waiting for RFID scan...")
-    arduino.reset_input_buffer()  # ignore buffered tags; wait for a fresh scan
-    while True:
+def beep_short():
+    """Short prompt / wrong-tag beep (firmware default duration for 'z')."""
+    send_command("z")
+
+
+def beep_long():
+    """Long 3 s beep that signals all RFID attempts failed."""
+    send_command(f"z {RFID_LONG_BEEP_MS}")
+
+
+def wait_for_rfid_scan(timeout):
+    """
+    Wait up to `timeout` seconds for an RFID line from the Arduino.
+    Returns the normalised UID string, or None if nothing was scanned in time.
+    (readline() returns after at most SERIAL_TIMEOUT (1 s), empty on no data, so
+    the deadline is checked about once per second.)
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
         line = arduino.readline().decode(errors="ignore").strip()
         if line.startswith("RFID:") or line.startswith("UID:"):
             scanned = normalise_rfid(line)
             print(f"Scanned RFID: {scanned}")
             return scanned
+    return None
 
 
 def verify_rfid_for_room(room):
     """
-    Look up the expected RFID for a room, scan the presented tag, and compare.
-    Sends CORRECT or WRONG back to the Arduino. Returns True on a match.
+    Verify the patient at `room` by RFID. Prompts with a short beep and listens
+    for a tag; returns True as soon as the correct tag is scanned.
+
+    Gives up — long beep, returns False so the scheduler logs the delivery as
+    failed and moves on — after MAX_WRONG_SCANS wrong tags, or after
+    RFID_WINDOWS x RFID_WINDOW_SECONDS (120 s) with no correct scan. The robot
+    never blocks forever on one patient.
     """
     if arduino is None:
         print(f"Arduino unavailable — skipping RFID check for room {room}")
@@ -234,16 +278,36 @@ def verify_rfid_for_room(room):
         return False
 
     expected = normalise_rfid(result[0])
-    scanned  = wait_for_rfid_scan()
-    print(f"Expected: {expected} | Got: {scanned}")
+    print(f"Waiting for RFID scan (room {room}, expecting {expected})...")
 
-    if scanned == expected:
-        # Correct patient: nothing to send here — the scheduler proceeds to
-        # send the dispense command for this delivery.
-        return True
+    arduino.reset_input_buffer()  # discard any tags buffered before we arrived
+    wrong_scans = 0
 
-    # Wrong patient: sound the buzzer (BUZZER_ALERT 'z' on the Arduino).
-    send_command("z")
+    for _window in range(RFID_WINDOWS):
+        beep_short()  # prompt the patient to scan (at 0 s, then again ~60 s)
+        window_deadline = time.time() + RFID_WINDOW_SECONDS
+
+        while time.time() < window_deadline and wrong_scans < MAX_WRONG_SCANS:
+            scanned = wait_for_rfid_scan(window_deadline - time.time())
+
+            if scanned is None:
+                break  # this window timed out; move to the next window
+
+            if scanned == expected:
+                print("RFID correct.")
+                return True
+
+            wrong_scans += 1
+            print(f"Wrong RFID ({wrong_scans}/{MAX_WRONG_SCANS}): got {scanned}")
+            beep_short()  # short beep for a wrong tag
+
+        if wrong_scans >= MAX_WRONG_SCANS:
+            break
+
+    # All attempts failed: too many wrong tags, or 120 s with no correct scan.
+    print(f"RFID verification FAILED for room {room} "
+          f"({wrong_scans} wrong scan(s)).")
+    beep_long()  # 3 s beep: all RFID attempts failed
     return False
 
 
@@ -299,8 +363,55 @@ def scheduler_loop():
 
     On a successful delivery the medication stock is decremented by one.
     Recurring schedules reset to 'Pending' after each run.
+
+    Each pass is wrapped in try/except so a serial glitch or a bad job logs an
+    error and keeps the thread alive (and tries to reconnect) instead of silently
+    killing all future deliveries.
     """
     while True:
+        try:
+            _run_scheduler_tick()
+        except serial.SerialException as e:
+            print(f"Serial error in scheduler — reconnecting: {e}")
+            try_reconnect_arduino()
+        except Exception as e:
+            print(f"Scheduler error (continuing next tick): {e}")
+
+        time.sleep(10)
+
+
+def _run_scheduler_tick():
+    """One scheduler pass: find due jobs, verify RFID, dispense, update the DB."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    now   = datetime.now().strftime("%H:%M")
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT schedules.id, patients.room, schedules.recurring,
+               schedules.medication_id
+        FROM   schedules
+        JOIN   patients ON schedules.patient_id = patients.id
+        WHERE  schedules.delivery_time = ?
+          AND  schedules.status = 'Pending'
+          AND  (
+                   (schedules.recurring = 0 AND schedules.delivery_date = ?)
+                OR (schedules.recurring = 1 AND (
+                       schedules.last_triggered_date IS NULL
+                    OR schedules.last_triggered_date != ?
+                   ))
+               )
+    """, (now, today, today))
+    jobs = c.fetchall()
+
+    for job_id, room, is_recurring, medication_id in jobs:
+        c.execute(
+            "UPDATE schedules SET status = 'Waiting for RFID' WHERE id = ?",
+            (job_id,),
+        )
+        conn.commit()
+
+        rfid_ok = verify_rfid_for_room(room)
         today = datetime.now().strftime("%Y-%m-%d")
         now   = datetime.now().strftime("%H:%M")
 
@@ -362,22 +473,37 @@ def scheduler_loop():
             else:
                 outcome = "RFID Correct"  # verified, but no medication slot on this schedule
 
-            if is_recurring:
+        if not rfid_ok:
+            outcome = "Wrong RFID"
+        elif medication_id:
+            # Correct patient — dispense one pill from the medication's slot.
+            result = dispense_pill(medication_id)
+            if result in ("COMPLETE", "CUP_NOT_TAKEN"):
+                # A pill physically dropped, so decrement the slot's stock.
                 c.execute(
-                    "UPDATE schedules SET status = 'Pending', last_triggered_date = ? WHERE id = ?",
-                    (today, job_id),
+                    "UPDATE medications SET stock = MAX(0, stock - 1) WHERE id = ?",
+                    (medication_id,),
                 )
-                print(f"Recurring job {job_id} (room {room}): {outcome}")
+                outcome = "Delivered" if result == "COMPLETE" else "Dispensed (cup not taken)"
             else:
-                c.execute(
-                    "UPDATE schedules SET status = ? WHERE id = ?",
-                    (outcome, job_id),
-                )
+                outcome = "Dispense Error"
+        else:
+            outcome = "RFID Correct"  # verified, but no medication slot on this schedule
 
-        conn.commit()
-        conn.close()
+        if is_recurring:
+            c.execute(
+                "UPDATE schedules SET status = 'Pending', last_triggered_date = ? WHERE id = ?",
+                (today, job_id),
+            )
+            print(f"Recurring job {job_id} (room {room}): {outcome}")
+        else:
+            c.execute(
+                "UPDATE schedules SET status = ? WHERE id = ?",
+                (outcome, job_id),
+            )
 
-        time.sleep(10)
+    conn.commit()
+    conn.close()
 
 
 # ==============================================================================

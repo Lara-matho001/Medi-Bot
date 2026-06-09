@@ -25,7 +25,7 @@ marked with `Medi-Bot` comments in `medi_bot_controller.ino`.
 | Command | Meaning | Arduino replies |
 | --- | --- | --- |
 | `D <slot>` | Dispense one pill from slot **1-5**, e.g. `D 3\r` | `DEBUG:...` progress, then `OK` and `COMPLETE` on success, or `ERROR:BAD_COMPARTMENT` / `ERROR:HOME_FAIL` / `ERROR:MAX_RETRIES_REACHED` / `ERROR:MULTI_PILL` |
-| `z` | Buzzer alert (wrong patient / needs a human) | `OK` |
+| `z` / `z <ms>` | Buzzer beep. `z` = short (~300 ms) wrong-patient/prompt beep; `z <ms>` beeps for `<ms>` (the Pi sends `z 3000` for the 3 s "all RFID attempts failed" alert) | `OK` |
 | `RESET` | Only meaningful after an `ERROR:MULTI_PILL` halt; clears the safety stop | `DEBUG:RESET_RECEIVED_EXITING_HALT` |
 
 ### RFID (automatic, no command needed)

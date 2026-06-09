@@ -21,7 +21,9 @@ const unsigned long rfid_report_interval_ms = 1000;
 
 // Buzzer alert tone (wrong patient / human intervention needed).
 const unsigned int buzzer_tone_hz = 1000;
-const unsigned long buzzer_alert_ms = 4000;
+// Default beep length when "z" is sent with no duration. A duration can be given
+// as "z <ms>" (e.g. "z 3000" for the 3 s "all RFID attempts failed" beep).
+const unsigned long buzzer_short_ms = 300;
 
 // Powers up the RFID reader and prepares the buzzer pin.
 void initialise_rfid();
@@ -30,7 +32,7 @@ void initialise_rfid();
 // seen, rate-limited by rfid_report_interval_ms.
 void rfid_poll_and_report();
 
-// Blocking buzzer beep used to flag a wrong patient.
-void rfid_beep_alert();
+// Blocking buzzer beep for `duration_ms` milliseconds.
+void rfid_beep_alert(unsigned long duration_ms);
 
 #endif

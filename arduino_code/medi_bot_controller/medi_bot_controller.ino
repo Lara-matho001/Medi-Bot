@@ -255,8 +255,9 @@ int runCommand() {
     dispense_compartment(arg1 - 1);
     break;
   case BUZZER_ALERT:
-    // Sound the buzzer to flag a wrong patient / request human intervention.
-    rfid_beep_alert();
+    // "z" -> short beep (wrong patient / prompt). "z <ms>" -> beep for <ms>,
+    // e.g. "z 3000" is the 3 s "all RFID attempts failed" alert.
+    rfid_beep_alert(arg1 > 0 ? (unsigned long)arg1 : buzzer_short_ms);
     Serial.println("OK");
     break;
 
