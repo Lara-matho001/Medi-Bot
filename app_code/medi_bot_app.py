@@ -41,14 +41,23 @@ SERIAL_TIMEOUT = 1
 DISPENSE_TIMEOUT = 120
 
 # RFID verification at the patient. The Pi runs the timing/beeps; the Arduino
-# just reads tags and beeps when told. The robot prompts with a short beep, then
-# listens. It gives up — long beep, delivery logged as failed, move to the next
-# patient — after MAX_WRONG_SCANS wrong tags, OR RFID_WINDOWS x RFID_WINDOW_SECONDS
-# (120 s) with no correct scan. It never blocks forever on one patient.
+# just reads tags and beeps when told — one blocking beep per "z" command, so
+# multi-beep patterns are sequenced here (see the beep_* helpers). The robot
+# prompts (2 beeps), listens, beeps on a wrong tag (3 short beeps) and on a
+# correct tag (1 long beep). It gives up — SOS beep, delivery logged as failed,
+# move to the next patient — after MAX_WRONG_SCANS wrong tags, OR RFID_WINDOWS x
+# RFID_WINDOW_SECONDS (120 s) with no correct scan. It never blocks forever on
+# one patient.
 RFID_WINDOW_SECONDS = 60     # one listen window
 RFID_WINDOWS        = 2      # 2 x 60 s = 120 s total
 MAX_WRONG_SCANS     = 3      # wrong tags allowed before giving up
-RFID_LONG_BEEP_MS   = 3000   # 3 s "all attempts failed" beep
+
+# Buzzer patterns — each beep is one firmware "z <ms>"; see the beep_* helpers.
+RFID_SHORT_BEEP_MS   = 300    # short beep: wrong-tag beeps + SOS edges
+RFID_PROMPT_BEEP_MS  = 500    # prompt beep
+RFID_CORRECT_BEEP_MS = 1000   # correct-tag beep
+RFID_LONG_BEEP_MS    = 3000   # long beep: SOS centre / "all attempts failed"
+RFID_BEEP_GAP_MS     = 200    # silence between beeps within a pattern
 
 # --- Flask ---
 FLASK_HOST = "0.0.0.0"
@@ -226,14 +235,40 @@ def normalise_rfid(rfid):
     return rfid.replace("RFID:", "").replace("UID:", "").strip().upper()
 
 
-def beep_short():
-    """Short prompt / wrong-tag beep (firmware default duration for 'z')."""
-    send_command("z")
+def _beep_sequence(durations_ms):
+    """
+    Play a sequence of beeps with a short gap between them.
+
+    Each "z <ms>" is a single BLOCKING beep on the Arduino, and send_command is
+    fire-and-forget, so we wait out each beep (plus a gap) here — otherwise the
+    commands queue on the board and run back-to-back as one continuous tone.
+    Blocks the caller for the length of the whole pattern.
+    """
+    for i, ms in enumerate(durations_ms):
+        send_command(f"z {ms}")
+        time.sleep(ms / 1000.0)                    # wait out the beep itself
+        if i < len(durations_ms) - 1:
+            time.sleep(RFID_BEEP_GAP_MS / 1000.0)  # gap before the next beep
 
 
-def beep_long():
-    """Long 3 s beep that signals all RFID attempts failed."""
-    send_command(f"z {RFID_LONG_BEEP_MS}")
+def beep_prompt():
+    """Prompt the patient to scan: 2 medium beeps."""
+    _beep_sequence([RFID_PROMPT_BEEP_MS, RFID_PROMPT_BEEP_MS])
+
+
+def beep_wrong():
+    """Wrong tag scanned: 3 short beeps."""
+    _beep_sequence([RFID_SHORT_BEEP_MS] * 3)
+
+
+def beep_correct():
+    """Correct tag scanned: 1 long beep."""
+    _beep_sequence([RFID_CORRECT_BEEP_MS])
+
+
+def beep_failed():
+    """All attempts failed: SOS-style short / long / short."""
+    _beep_sequence([RFID_SHORT_BEEP_MS, RFID_LONG_BEEP_MS, RFID_SHORT_BEEP_MS])
 
 
 def wait_for_rfid_scan(timeout):
@@ -264,7 +299,7 @@ def verify_rfid_for_room(room):
                         NOT a wrong tag)
         "NO_ARDUINO"  - the reader/board is not connected
 
-    Prompts with a short beep while listening and a long beep when it gives up.
+    Prompts with beeps while listening and an SOS beep when it gives up.
     The robot never blocks forever on one patient.
     """
     if arduino is None:
@@ -289,7 +324,7 @@ def verify_rfid_for_room(room):
     wrong_scans = 0
 
     for _window in range(RFID_WINDOWS):
-        beep_short()  # prompt the patient to scan (at 0 s, then again ~60 s)
+        beep_prompt()  # 2 beeps: prompt the patient to scan (at 0 s, then ~60 s)
         window_deadline = time.time() + RFID_WINDOW_SECONDS
 
         while time.time() < window_deadline and wrong_scans < MAX_WRONG_SCANS:
@@ -300,17 +335,18 @@ def verify_rfid_for_room(room):
 
             if scanned == expected:
                 print("RFID correct.")
+                beep_correct()  # 1 long beep: correct tag
                 return "CORRECT"
 
             wrong_scans += 1
             print(f"Wrong RFID ({wrong_scans}/{MAX_WRONG_SCANS}): got {scanned}")
-            beep_short()  # short beep for a wrong tag
+            beep_wrong()  # 3 short beeps for a wrong tag
 
         if wrong_scans >= MAX_WRONG_SCANS:
             break
 
     # Gave up. Long beep, then report WHY: wrong tag(s) vs. nobody scanned at all.
-    beep_long()  # 3 s beep: all RFID attempts failed
+    beep_failed()  # SOS beep: all RFID attempts failed
     if wrong_scans > 0:
         print(f"RFID FAILED for room {room}: {wrong_scans} wrong scan(s).")
         return "WRONG"
